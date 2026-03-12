@@ -56,6 +56,11 @@ const Dashboard = () => {
               <NavItem active icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>} label="Command Center" />
             </div>
 
+            {/* 🟢 NEW: USER MANAGEMENT BUTTON */}
+            <div onClick={() => navigate('/users')} className="cursor-pointer">
+              <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>} label="User Management" />
+            </div>
+
             <div onClick={() => navigate('/dropoff')} className="cursor-pointer">
               <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m3-4h1m-1 4h1m-5 8h8" /></svg>} label="Drop-Off Nodes" />
             </div>
@@ -104,7 +109,7 @@ const Dashboard = () => {
               <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl group-hover:bg-blue-500/30 transition-all"></div>
               <div className="flex items-start justify-between">
                 <div>
-                    <p className="text-sm font-bold text-blue-300 tracking-widest uppercase mb-2">Active Units</p>
+                    <p className="text-sm font-bold text-blue-300 tracking-widest uppercase mb-2">Total of Users</p>
                     <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">1,847</p>
                 </div>
                 <div className="p-3 rounded-xl bg-blue-500/20 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.3)] border border-blue-400/20">
@@ -122,7 +127,7 @@ const Dashboard = () => {
               <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-purple-500/20 rounded-full blur-2xl group-hover:bg-purple-500/30 transition-all"></div>
               <div className="flex items-start justify-between">
                 <div>
-                    <p className="text-sm font-bold text-purple-300 tracking-widest uppercase mb-2">Active Nodes</p>
+                    <p className="text-sm font-bold text-purple-300 tracking-widest uppercase mb-2">Active Collectors</p>
                     <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">47</p>
                 </div>
                 <div className="p-3 rounded-xl bg-purple-500/20 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.3)] border border-purple-400/20">
@@ -140,7 +145,7 @@ const Dashboard = () => {
               <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-[#00C853]/20 rounded-full blur-2xl group-hover:bg-[#00C853]/30 transition-all"></div>
               <div className="flex items-start justify-between">
                 <div>
-                    <p className="text-sm font-bold text-[#69F0AE] tracking-widest uppercase mb-2">Peak Material Type</p>
+                    <p className="text-sm font-bold text-[#69F0AE] tracking-widest uppercase mb-2">Top Scanned</p>
                     <p className="text-4xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(0,200,83,0.5)]">Cardboard</p>
                 </div>
                 <div className="p-3 rounded-xl bg-[#00C853]/20 text-[#69F0AE] shadow-[0_0_15px_rgba(0,200,83,0.3)] border border-[#00C853]/30">
