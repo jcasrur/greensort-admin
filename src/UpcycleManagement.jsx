@@ -1,31 +1,15 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Sidebar from './Sidebar'; // 🟢 IN-IMPORT NATIN ANG SIDEBAR
 
 const UpcycleManagement = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('suggestions');
 
-  // 🟢 FUNCTION PARA SA SIGN OUT
-  const handleSignOut = () => {
-    if (window.confirm("Are you sure you want to sign out?")) {
-      navigate('/'); // I-redirect pabalik sa login page
-    }
-  };
-
-  // Reusable Components
+  // Reusable Components (Keep for main content)
   const GlassCard = ({ children, className = '' }) => (
     <div className={`backdrop-blur-xl bg-[#0A1A2F]/60 border border-white/10 rounded-2xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] p-6 ${className}`}>
       {children}
-    </div>
-  );
-
-  const NavItem = ({ icon, label, active }) => (
-    <div className={`flex items-center gap-4 px-6 py-4 transition-all duration-300 group relative overflow-hidden rounded-xl mx-2 my-1
-      ${active ? 'bg-[#00C853]/20 text-[#00C853] shadow-[0_0_20px_rgba(0,200,83,0.3)] border border-[#00C853]/30' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-      {active && <div className="absolute left-0 top-0 h-full w-1 bg-[#00C853] shadow-[0_0_15px_#00C853]"></div>}
-      <div className="z-10">{icon}</div>
-      <span className="font-semibold text-sm tracking-wider z-10">{label}</span>
-      {!active && <div className="absolute inset-0 bg-gradient-to-r from-[#00C853]/0 to-[#00C853]/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>}
     </div>
   );
 
@@ -50,48 +34,8 @@ const UpcycleManagement = () => {
       <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-[#00C853]/30 rounded-full blur-[120px] opacity-50 pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px] opacity-40 pointer-events-none"></div>
       
-      {/* 🟢 SIDEBAR */}
-      <div className="w-72 h-full backdrop-blur-2xl bg-[#020C14]/80 border-r border-white/10 flex flex-col justify-between z-20 shadow-2xl">
-        <div className="overflow-y-auto no-scrollbar">
-          <div className="p-8 pb-12 relative">
-            <h1 className="text-3xl font-black tracking-widest relative z-10">
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00C853] to-[#69F0AE] drop-shadow-[0_0_10px_rgba(0,200,83,0.8)]">GREEN</span>
-              <span className="text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">SORT</span>
-            </h1>
-          </div>
-          
-          <nav className="space-y-3 px-2">
-            <div onClick={() => navigate('/dashboard')} className="cursor-pointer">
-              <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6z" /></svg>} label="Command Center" />
-            </div>
-            <div onClick={() => navigate('/dropoff')} className="cursor-pointer">
-              <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m3-4h1m-1 4h1m-5 8h8" /></svg>} label="Drop-Off Centers" />
-            </div>
-            <div onClick={() => navigate('/upcycle')} className="cursor-pointer">
-              <NavItem active icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>} label="Upcycle Management" />
-            </div>
-          </nav>
-        </div>
-        
-        {/* Footer Section with Sign Out Button */}
-        <div className="p-6 shrink-0 border-t border-white/5 bg-[#020C14]/50">
-            <GlassCard className="flex items-center justify-between !p-4 !bg-[#00C853]/10 !border-[#00C853]/30">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00C853] to-blue-500 flex items-center justify-center text-sm font-bold text-white shadow-[0_0_15px_#00C853]">A</div>
-                    <div>
-                        <p className="text-sm font-bold text-white tracking-wider">Admin Unit</p>
-                        <p className="text-[10px] text-[#00C853]/80 tracking-wider uppercase">Online</p>
-                    </div>
-                </div>
-                {/* 🔴 SIGN OUT BUTTON BUTTON */}
-                <button onClick={handleSignOut} className="text-gray-400 hover:text-red-500 transition-all transform hover:scale-110 active:scale-95">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                    </svg>
-                </button>
-            </GlassCard>
-        </div>
-      </div>
+      {/* 🟢 DITO NATIN INILAGAY ANG REUSABLE SIDEBAR */}
+      <Sidebar />
 
       {/* 🟢 MAIN CONTENT */}
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
