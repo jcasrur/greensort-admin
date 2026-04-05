@@ -1,32 +1,64 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import Sidebar from './Sidebar';
+import { supabase } from './supabase'; // 🟢 IN-IMPORT NATIN ANG SUPABASE
 
 const Dashboard = () => {
-  const navigate = useNavigate();
+  // 🟢 STATES PARA SA LIVE DATA
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [activeCollectors, setActiveCollectors] = useState(0);
+  const [topScanned, setTopScanned] = useState("Loading...");
 
-  // 🟢 FUNCTION PARA SA SIGN OUT
-  const handleSignOut = () => {
-    if (window.confirm("Are you sure you want to sign out?")) {
-      navigate('/'); // Babalik sa Login Page
-    }
-  };
+  // 🟢 FETCH DATA MULA SA DATABASE TUWING BUBUKSAN ANG COMMAND CENTER
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        // 1. Bilangin ang lahat ng Registered Users sa 'profiles'
+        const { count: usersCount } = await supabase
+          .from('profiles')
+          .select('*', { count: 'exact', head: true });
+        if (usersCount !== null) setTotalUsers(usersCount);
+
+        // 2. Bilangin ang lahat ng Active Drop-off Nodes (Approved)
+        const { count: collectorsCount } = await supabase
+          .from('dropoff_applications')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'approved');
+        if (collectorsCount !== null) setActiveCollectors(collectorsCount);
+
+        // 3. Kunin ang pinakamaraming nai-record sa 'surrender_logs' (Top Scanned)
+        const { data: logs } = await supabase
+          .from('surrender_logs')
+          .select('waste_type');
+          
+        if (logs && logs.length > 0) {
+          const counts = {};
+          let maxCount = 0;
+          let topItem = "None";
+          
+          logs.forEach(log => {
+             const item = log.waste_type || 'Unknown';
+             counts[item] = (counts[item] || 0) + 1;
+             if (counts[item] > maxCount) {
+                 maxCount = counts[item];
+                 topItem = item;
+             }
+          });
+          setTopScanned(topItem);
+        } else {
+          setTopScanned("N/A"); // Kung walang record
+        }
+
+      } catch (error) {
+        console.error("Error fetching metrics:", error);
+      }
+    };
+
+    fetchMetrics();
+  }, []);
 
   const GlassCard = ({ children, className = '' }) => (
     <div className={`backdrop-blur-xl bg-[#0A1A2F]/60 border border-white/10 rounded-2xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] p-6 ${className}`}>
       {children}
-    </div>
-  );
-
-  const NavItem = ({ icon, label, active }) => (
-    <div className={`flex items-center gap-4 px-6 py-4 transition-all duration-300 group relative overflow-hidden rounded-xl mx-2 my-1
-      ${active 
-        ? 'bg-[#00C853]/20 text-[#00C853] shadow-[0_0_20px_rgba(0,200,83,0.3)] border border-[#00C853]/30' 
-        : 'text-gray-400 hover:bg-white/5 hover:text-white'
-      }`}>
-      {active && <div className="absolute left-0 top-0 h-full w-1 bg-[#00C853] shadow-[0_0_15px_#00C853]"></div>}
-      <div className="z-10">{icon}</div>
-      <span className="font-semibold text-sm tracking-wider z-10">{label}</span>
-      {!active && <div className="absolute inset-0 bg-gradient-to-r from-[#00C853]/0 to-[#00C853]/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>}
     </div>
   );
 
@@ -38,57 +70,8 @@ const Dashboard = () => {
       <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px] opacity-40 pointer-events-none"></div>
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGZ0Ij48cGF0aCBkPSJNMCAwaDQwdjQwSDB6Ii8+PHBhdGggZD0iTTIwIDIwLjVWMThIMBvMGwyLTJ2MnoiIGZpbGw9IiNGRkZGRkYiIG9wYWNpdHk9Ii4wNSIvPjwvZz48L3N2Zz4=')] opacity-20 pointer-events-none"></div>
 
-      {/* 🟢 SIDEBAR */}
-      <div className="w-72 h-full backdrop-blur-2xl bg-[#020C14]/80 border-r border-white/10 flex flex-col justify-between z-20 shadow-2xl">
-        <div className="overflow-y-auto no-scrollbar">
-          {/* Logo Area */}
-          <div className="p-8 pb-12 relative">
-            <h1 className="text-3xl font-black tracking-widest relative z-10">
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00C853] to-[#69F0AE] drop-shadow-[0_0_10px_rgba(0,200,83,0.8)]">GREEN</span>
-              <span className="text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">SORT</span>
-            </h1>
-            <div className="absolute bottom-6 left-8 w-20 h-1 bg-gradient-to-r from-[#00C853] to-transparent rounded-full opacity-50"></div>
-          </div>
+      <Sidebar />
 
-          {/* Navigation */}
-          <nav className="space-y-3 px-2">
-            <div onClick={() => navigate('/dashboard')} className="cursor-pointer">
-              <NavItem active icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>} label="Command Center" />
-            </div>
-
-            {/* 🟢 NEW: USER MANAGEMENT BUTTON */}
-            <div onClick={() => navigate('/users')} className="cursor-pointer">
-              <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>} label="User Management" />
-            </div>
-
-            <div onClick={() => navigate('/dropoff')} className="cursor-pointer">
-              <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m3-4h1m-1 4h1m-5 8h8" /></svg>} label="Drop-Off Nodes" />
-            </div>
-
-            <div onClick={() => navigate('/upcycle')} className="cursor-pointer">
-              <NavItem icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>} label="Upcycle Management" />
-            </div>
-          </nav>
-        </div>
-
-        {/* User Profile with Sign Out */}
-        <div className="p-6 shrink-0 border-t border-white/5 bg-[#020C14]/50">
-            <GlassCard className="flex items-center justify-between !p-4 !bg-[#00C853]/10 !border-[#00C853]/30">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00C853] to-blue-500 flex items-center justify-center text-sm font-bold text-white shadow-[0_0_15px_#00C853]">A</div>
-                    <div>
-                        <p className="text-sm font-bold text-white tracking-wider">Admin Unit</p>
-                        <p className="text-[10px] text-[#00C853]/80 tracking-wider uppercase">ONLINE</p>
-                    </div>
-                </div>
-                <button onClick={handleSignOut} className="text-gray-400 hover:text-red-500 transition-all transform hover:scale-110 active:scale-95">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                </button>
-            </GlassCard>
-        </div>
-      </div>
-
-      {/* 🟢 MAIN CONTENT AREA */}
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
         <div className="p-8 lg:p-12 max-w-[1600px] mx-auto">
           
@@ -104,31 +87,35 @@ const Dashboard = () => {
 
           {/* Top Stats Row */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
-            {/* Active Users */}
+            {/* 🟢 DYNAMIC: Active Users */}
             <GlassCard className="relative overflow-hidden group">
               <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl group-hover:bg-blue-500/30 transition-all"></div>
               <div className="flex items-start justify-between">
                 <div>
                     <p className="text-sm font-bold text-blue-300 tracking-widest uppercase mb-2">Total of Users</p>
-                    <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">1,847</p>
+                    <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">
+                      {totalUsers}
+                    </p>
                 </div>
                 <div className="p-3 rounded-xl bg-blue-500/20 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.3)] border border-blue-400/20">
                     <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
                 </div>
               </div>
               <div className="mt-4 text-xs text-blue-300 flex items-center gap-1">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-                <span>+12% from last cycle</span>
+                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                <span>Live from Database</span>
               </div>
             </GlassCard>
             
-            {/* Active Centers */}
+            {/* 🟢 DYNAMIC: Active Centers */}
             <GlassCard className="relative overflow-hidden group">
               <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-purple-500/20 rounded-full blur-2xl group-hover:bg-purple-500/30 transition-all"></div>
               <div className="flex items-start justify-between">
                 <div>
                     <p className="text-sm font-bold text-purple-300 tracking-widest uppercase mb-2">Active Collectors</p>
-                    <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">47</p>
+                    <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+                      {activeCollectors}
+                    </p>
                 </div>
                 <div className="p-3 rounded-xl bg-purple-500/20 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.3)] border border-purple-400/20">
                     <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
@@ -136,29 +123,31 @@ const Dashboard = () => {
               </div>
               <div className="mt-4 text-xs text-purple-300 flex items-center gap-1">
                 <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
-                <span>All systems nominal</span>
+                <span>Approved Centers</span>
               </div>
             </GlassCard>
 
-            {/* Top Category */}
+            {/* 🟢 DYNAMIC: Top Category */}
             <GlassCard className="relative overflow-hidden group !bg-[#00C853]/10 !border-[#00C853]/30">
               <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-[#00C853]/20 rounded-full blur-2xl group-hover:bg-[#00C853]/30 transition-all"></div>
               <div className="flex items-start justify-between">
                 <div>
                     <p className="text-sm font-bold text-[#69F0AE] tracking-widest uppercase mb-2">Top Scanned</p>
-                    <p className="text-4xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(0,200,83,0.5)]">Cardboard</p>
+                    <p className="text-3xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(0,200,83,0.5)] capitalize truncate max-w-[150px]">
+                      {topScanned}
+                    </p>
                 </div>
                 <div className="p-3 rounded-xl bg-[#00C853]/20 text-[#69F0AE] shadow-[0_0_15px_rgba(0,200,83,0.3)] border border-[#00C853]/30">
                     <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
                 </div>
               </div>
                <div className="mt-4 w-full bg-[#00C853]/20 h-1.5 rounded-full overflow-hidden">
-                 <div className="h-full bg-gradient-to-r from-[#00C853] to-[#69F0AE] w-[75%] shadow-[0_0_10px_#00C853]"></div>
+                 <div className="h-full bg-gradient-to-r from-[#00C853] to-[#69F0AE] w-[100%] shadow-[0_0_10px_#00C853]"></div>
                </div>
             </GlassCard>
           </div>
 
-          {/* Charts Row */}
+          {/* Charts Row (Static Placeholder Visuals) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
             {/* Glowing Bar Chart */}
             <GlassCard>
@@ -268,24 +257,11 @@ const Dashboard = () => {
                         <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     </div>
                     <div>
-                        <p className="font-bold text-sm text-white tracking-wide">New Pending Application detected</p>
-                        <p className="text-xs text-gray-400 font-mono mt-1">SOURCE_ID: Brgy. San Pablo Cavite</p>
+                        <p className="font-bold text-sm text-white tracking-wide">System Connected to Supabase</p>
+                        <p className="text-xs text-gray-400 font-mono mt-1">STATUS: Live Metrics Running</p>
                     </div>
                 </div>
-                <p className="text-xs text-gray-500 font-mono bg-black/30 px-3 py-1 rounded-full border border-white/10">T-minus 5h</p>
-              </div>
-              
-              <div className="flex justify-between items-center bg-white/5 p-4 rounded-xl border border-white/5 hover:bg-white/10 transition-all group">
-                <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-[#00C853]/20 flex items-center justify-center border border-[#00C853]/30 shadow-[0_0_10px_rgba(0,200,83,0.2)] group-hover:shadow-[0_0_15px_rgba(0,200,83,0.4)] transition-all">
-                         <svg className="w-5 h-5 text-[#69F0AE]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    </div>
-                    <div>
-                        <p className="font-bold text-sm text-white tracking-wide">Drop-Off Node #47 Online</p>
-                        <p className="text-xs text-gray-400 font-mono mt-1">STATUS: Verified Connection</p>
-                    </div>
-                </div>
-                <p className="text-xs text-gray-500 font-mono bg-black/30 px-3 py-1 rounded-full border border-white/10">T-minus 8h</p>
+                <p className="text-xs text-gray-500 font-mono bg-black/30 px-3 py-1 rounded-full border border-white/10">Active</p>
               </div>
             </div>
           </GlassCard>

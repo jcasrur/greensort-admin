@@ -58,11 +58,46 @@ const DropOffNodes = () => {
     }
   };
 
-  const handleReject = async (id, programName) => {
-    if (window.confirm(`Are you sure you want to reject ${programName}?`)) {
-      const { error } = await supabase.from('dropoff_applications').update({ status: 'rejected' }).eq('id', id);
-      if (error) alert("Error: " + error.message);
-      else fetchApplications(); 
+  const handleReject = async (id, email, programName) => {
+    // 🟢 Gagamit tayo ng prompt para makapag-type ka ng rason kung bakit na-reject
+    const reason = window.prompt(
+      `Are you sure you want to REJECT ${programName}?\n\nEnter reason for rejection (this will be sent to the user):`, 
+      "Your application did not meet our current requirements."
+    );
+
+    // Kung hindi kinansel ni Admin yung prompt
+    if (reason !== null) { 
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !emailRegex.test(email)) {
+          alert(`❌ Rejection Failed: "${email}" is not a valid email address.`);
+          return; 
+      }
+
+      try {
+        // ⚠️ PAALALA: Kailangan mo ng bagong template sa EmailJS para sa Rejection!
+        await emailjs.send(
+          'service_nzpn1cn',       
+          'ILAGAY_MO_DITO_ANG_REJECT_TEMPLATE_ID', // 🔴 PALITAN MO ITO NG BAGO MONG TEMPLATE ID
+          { 
+            to_email: email, 
+            to_name: programName,
+            reject_reason: reason // 🟢 Ipapasa natin yung rason sa email nila
+          },
+          { publicKey: 'lkfpdujTp2Sx9Eq3u' }      
+        );
+
+        const { error } = await supabase.from('dropoff_applications').update({ status: 'rejected' }).eq('id', id);
+        
+        if (error) {
+          alert("Email sent, but database error: " + error.message);
+        } else {
+          alert(`✅ Success! ${programName} is now rejected and the rejection email was sent!`);
+          fetchApplications(); 
+        }
+      } catch (emailError) {
+        console.error("Email Error Details:", emailError);
+        alert(`❌ Rejection Failed! The email "${email}" might be inactive or invalid.`);
+      }
     }
   };
 
@@ -210,7 +245,7 @@ const DropOffNodes = () => {
                                       <button onClick={() => handleApprove(app.id, app.user_email, app.program_name)} className="text-gray-500 hover:text-[#00C853] transition-all transform hover:scale-125 hover:drop-shadow-[0_0_8px_rgba(0,200,83,0.8)]">
                                           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                                       </button>
-                                      <button onClick={() => handleReject(app.id, app.program_name)} className="text-gray-500 hover:text-red-500 transition-all transform hover:scale-125 hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]">
+                                      <button onClick={() => handleReject(app.id, app.user_email, app.program_name)} className="text-gray-500 hover:text-red-500 transition-all transform hover:scale-125 hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]">
                                           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                                       </button>
                                   </div>

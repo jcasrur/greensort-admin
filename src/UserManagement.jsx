@@ -1,15 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabase'; 
-import Sidebar from './Sidebar'; // 🟢 IN-IMPORT NATIN DITO YUNG SIDEBAR NA GINAWA MO
+import Sidebar from './Sidebar'; 
 
 export default function UserManagement() {
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // 🟢 DITO NATIN I-SASAVE KUNG SINO ANG MGA ONLINE NGAYON
+  const [onlineUserIds, setOnlineUserIds] = useState(new Set());
 
   useEffect(() => {
     fetchUsers();
+
+    // 🟢 MAKINIG TAYO SA INVISIBLE ROOM KUNG SINO ANG ONLINE
+    const channel = supabase.channel('app-presence');
+
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState();
+      const activeIds = new Set();
+
+      // Kunin lahat ng ID ng mga users na nasa room ngayon
+      Object.keys(state).forEach(key => {
+        const presenceData = state[key][0];
+        if (presenceData && presenceData.user_id) {
+          activeIds.add(presenceData.user_id);
+        }
+      });
+
+      // I-update ang screen natin
+      setOnlineUserIds(activeIds);
+    });
+
+    channel.subscribe();
+
+    // Kapag umalis ka sa Admin page, patayin ang listener
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchUsers = async () => {
@@ -39,7 +68,6 @@ export default function UserManagement() {
         alert("User deleted successfully!");
       } catch (error) {
         console.error("Error deleting user:", error.message);
-        alert("Failed to delete user. Please check console.");
       }
     }
   };
@@ -50,15 +78,12 @@ export default function UserManagement() {
     return new Date(user.created_at) > oneWeekAgo;
   }).length;
 
+  // 🟢 ETO NA YUNG BAGONG LOGIC! 
+  // Titignan na lang niya kung nasa listahan ba ng mga online yung user ngayon
   const checkIfActive = (user) => {
-    const dateToCheck = user.last_login ? new Date(user.last_login) : new Date(user.created_at);
-    const today = new Date();
-    const diffTime = Math.abs(today - dateToCheck);
-    const diffDays = diffTime / (1000 * 60 * 60 * 24); 
-    return diffDays <= 7;
+    return onlineUserIds.has(user.id);
   };
 
-  // Kina-keep natin itong GlassCard dahil ginagamit ito sa content area (Summary cards)
   const GlassCard = ({ children, className = '' }) => (
     <div className={`backdrop-blur-xl bg-[#0A1A2F]/60 border border-white/10 rounded-2xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] p-6 ${className}`}>
       {children}
@@ -72,10 +97,8 @@ export default function UserManagement() {
       <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-[#00C853]/30 rounded-full blur-[120px] opacity-50 pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px] opacity-40 pointer-events-none"></div>
 
-      {/* 🟢 DITO NATIN INILAGAY ANG SIDEBAR MO (ISANG LINYA NA LANG!) */}
       <Sidebar />
 
-      {/* 🟢 YUNG MAIN CONTENT AREA HINDI NATIN GINALAW! */}
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
         <div className="p-8 lg:p-12 max-w-[1600px] mx-auto">
           
@@ -136,7 +159,6 @@ export default function UserManagement() {
                         <td colSpan="5" className="p-8 text-center text-gray-500 font-mono">No user records found.</td>
                       </tr>
                     ) : (
-                       /* USER ROWS DATA HERE */
                       users.map((user) => (
                         <tr key={user.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                           <td className="p-5">
@@ -149,13 +171,14 @@ export default function UserManagement() {
                             </span>
                           </td>
                           <td className="p-5">
+                            {/* 🟢 DITO NA NAGREREFLECT YUNG REALTIME STATUS */}
                             {checkIfActive(user) ? (
-                              <span className="flex items-center text-[#00C853] text-xs font-bold">
-                                <span className="w-2 h-2 rounded-full bg-[#00C853] mr-2 shadow-[0_0_8px_#00C853]"></span> ACTIVE
+                              <span className="flex items-center text-[#00C853] text-xs font-bold transition-all duration-300">
+                                <span className="w-2 h-2 rounded-full bg-[#00C853] mr-2 shadow-[0_0_8px_#00C853] animate-pulse"></span> ONLINE
                               </span>
                             ) : (
-                              <span className="flex items-center text-red-500 text-xs font-bold">
-                                <span className="w-2 h-2 rounded-full bg-red-500 mr-2 shadow-[0_0_8px_red]"></span> INACTIVE
+                              <span className="flex items-center text-red-500/70 text-xs font-bold transition-all duration-300">
+                                <span className="w-2 h-2 rounded-full bg-red-500/50 mr-2 shadow-[0_0_8px_rgba(239,68,68,0.5)]"></span> OFFLINE
                               </span>
                             )}
                           </td>
@@ -163,9 +186,6 @@ export default function UserManagement() {
                             {new Date(user.created_at).toLocaleDateString('en-US', {
                               year: 'numeric', month: 'short', day: 'numeric'
                             })}
-                            {new Date() - new Date(user.created_at) < 7 * 24 * 60 * 60 * 1000 && (
-                              <span className="ml-3 bg-[#00C853] text-black font-black text-[10px] px-2 py-0.5 rounded shadow-[0_0_8px_rgba(0,200,83,0.5)]">NEW</span>
-                            )}
                           </td>
                           <td className="p-5 text-right">
                             <button 
