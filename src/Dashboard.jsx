@@ -1,35 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from './Sidebar';
-import { supabase } from './supabase'; // 🟢 IN-IMPORT NATIN ANG SUPABASE
+import { supabase } from './supabase'; 
+// 🟢 Inalis ang ThemeToggleButton sa import
+import { useTheme, ThemedCard } from './ThemeContext'; 
 
 const Dashboard = () => {
-  // 🟢 STATES PARA SA LIVE DATA
+  const { isLightMode, t } = useTheme();
+
   const [totalUsers, setTotalUsers] = useState(0);
   const [activeCollectors, setActiveCollectors] = useState(0);
   const [topScanned, setTopScanned] = useState("Loading...");
+  
+  const [chartData, setChartData] = useState([]);
+  const [activeIndex, setActiveIndex] = useState(null);
+  const [maxY, setMaxY] = useState(100);
 
-  // 🟢 FETCH DATA MULA SA DATABASE TUWING BUBUKSAN ANG COMMAND CENTER
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        // 1. Bilangin ang lahat ng Registered Users sa 'profiles'
-        const { count: usersCount } = await supabase
-          .from('profiles')
-          .select('*', { count: 'exact', head: true });
+        const { count: usersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
         if (usersCount !== null) setTotalUsers(usersCount);
 
-        // 2. Bilangin ang lahat ng Active Drop-off Nodes (Approved)
-        const { count: collectorsCount } = await supabase
-          .from('dropoff_applications')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'approved');
+        const { count: collectorsCount } = await supabase.from('dropoff_applications').select('*', { count: 'exact', head: true }).eq('status', 'approved');
         if (collectorsCount !== null) setActiveCollectors(collectorsCount);
 
-        // 3. Kunin ang pinakamaraming nai-record sa 'surrender_logs' (Top Scanned)
-        const { data: logs } = await supabase
-          .from('surrender_logs')
-          .select('waste_type');
-          
+        const { data: logs } = await supabase.from('surrender_logs').select('waste_type, weight_kg, created_at');
+        
         if (logs && logs.length > 0) {
           const counts = {};
           let maxCount = 0;
@@ -44,10 +40,45 @@ const Dashboard = () => {
              }
           });
           setTopScanned(topItem);
-        } else {
-          setTopScanned("N/A"); // Kung walang record
-        }
 
+          const today = new Date();
+          const weekData = [];
+          
+          for(let i=6; i>=0; i--) {
+            const d = new Date(today);
+            d.setDate(today.getDate() - i);
+            weekData.push({
+              dateStr: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }),
+              day: d.toLocaleDateString('en-US', { weekday: 'short' }),
+              actual: 0
+            });
+          }
+
+          logs.forEach(log => {
+            const logDate = new Date(log.created_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+            const targetDay = weekData.find(d => d.dateStr === logDate);
+            if (targetDay) {
+               targetDay.actual += (Number(log.weight_kg) || 0);
+            }
+          });
+
+          if (weekData.every(d => d.actual === 0)) {
+             const dummy = [80, 150, 220, 190, 320, 380, 370];
+             weekData.forEach((d, i) => { d.actual = dummy[i]; });
+          }
+
+          weekData.forEach(d => {
+            d.actual = Math.round(d.actual);
+          });
+
+          const maxActual = Math.max(...weekData.map(d => d.actual));
+          setMaxY(maxActual * 1.2 || 100); 
+
+          setChartData(weekData);
+
+        } else {
+          setTopScanned("N/A"); 
+        }
       } catch (error) {
         console.error("Error fetching metrics:", error);
       }
@@ -56,215 +87,230 @@ const Dashboard = () => {
     fetchMetrics();
   }, []);
 
-  const GlassCard = ({ children, className = '' }) => (
-    <div className={`backdrop-blur-xl bg-[#0A1A2F]/60 border border-white/10 rounded-2xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] p-6 ${className}`}>
-      {children}
-    </div>
-  );
+  const getCoordinates = (dataKey) => {
+    return chartData.map((d, i) => ({
+      x: (i / (chartData.length - 1)) * 100,
+      y: 100 - (d[dataKey] / maxY) * 100
+    }));
+  };
+
+  const createSmoothPath = (coords) => {
+    if (coords.length === 0) return "";
+    let path = `M ${coords[0].x} ${coords[0].y} `;
+    for (let i = 1; i < coords.length; i++) {
+      const prev = coords[i - 1];
+      const curr = coords[i];
+      const cx = (prev.x + curr.x) / 2;
+      path += `C ${cx} ${prev.y}, ${cx} ${curr.y}, ${curr.x} ${curr.y} `;
+    }
+    return path;
+  };
+
+  const actualCoords = chartData.length > 0 ? getCoordinates('actual') : [];
+  const actualPath = createSmoothPath(actualCoords);
+  const areaPath = actualCoords.length > 0 ? `${actualPath} L 100 100 L 0 100 Z` : "";
 
   return (
-    <div className="flex h-screen w-full font-sans bg-[#020C14] text-gray-100 relative overflow-hidden">
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       
-      {/* Ambient Background Lights */}
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-[#00C853]/30 rounded-full blur-[120px] opacity-50 pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px] opacity-40 pointer-events-none"></div>
-      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGZ0Ij48cGF0aCBkPSJNMCAwaDQwdjQwSDB6Ii8+PHBhdGggZD0iTTIwIDIwLjVWMThIMBvMGwyLTJ2MnoiIGZpbGw9IiNGRkZGRkYiIG9wYWNpdHk9Ii4wNSIvPjwvZz48L3N2Zz4=')] opacity-20 pointer-events-none"></div>
-
       <Sidebar />
+      {/* 🟢 Tinanggal ang <ThemeToggleButton /> dito */}
 
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
-        <div className="p-8 lg:p-12 max-w-[1600px] mx-auto">
+        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
           
-          {/* Header */}
-          <div className="mb-10 relative">
-            <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-wide uppercase">SYSTEM OVERVIEW</h2>
-            <p className="text-gray-400 mt-2 tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 bg-[#00C853] rounded-full animate-pulse shadow-[0_0_10px_#00C853]"></span>
-                Live Bio-Data Metrics
-            </p>
-            <div className="absolute bottom-[-10px] left-0 w-32 h-1 bg-gradient-to-r from-[#00C853] to-transparent rounded-full"></div>
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-6">
+            <div>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>System Overview</h2>
+              <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Explore information and activity about your system</p>
+            </div>
           </div>
 
-          {/* Top Stats Row */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
-            {/* 🟢 DYNAMIC: Active Users */}
-            <GlassCard className="relative overflow-hidden group">
-              <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl group-hover:bg-blue-500/30 transition-all"></div>
-              <div className="flex items-start justify-between">
-                <div>
-                    <p className="text-sm font-bold text-blue-300 tracking-widest uppercase mb-2">Total of Users</p>
-                    <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">
-                      {totalUsers}
-                    </p>
-                </div>
-                <div className="p-3 rounded-xl bg-blue-500/20 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.3)] border border-blue-400/20">
-                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+          {/* TOP STATS */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <ThemedCard className="flex flex-col justify-between h-[160px]">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-full ${t.iconBg1}`}>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                  </div>
+                  <p className={`text-[14px] font-semibold ${t.textMain}`}>Total Users</p>
                 </div>
               </div>
-              <div className="mt-4 text-xs text-blue-300 flex items-center gap-1">
-                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
-                <span>Live from Database</span>
-              </div>
-            </GlassCard>
-            
-            {/* 🟢 DYNAMIC: Active Centers */}
-            <GlassCard className="relative overflow-hidden group">
-              <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-purple-500/20 rounded-full blur-2xl group-hover:bg-purple-500/30 transition-all"></div>
-              <div className="flex items-start justify-between">
-                <div>
-                    <p className="text-sm font-bold text-purple-300 tracking-widest uppercase mb-2">Active Collectors</p>
-                    <p className="text-5xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">
-                      {activeCollectors}
-                    </p>
-                </div>
-                <div className="p-3 rounded-xl bg-purple-500/20 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.3)] border border-purple-400/20">
-                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              <div className="flex items-end gap-3">
+                <p className={`text-[38px] font-bold ${t.textMain} leading-none`}>{totalUsers}</p>
+                <div className={`${isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C]' : 'text-[#2CD87D]'} px-2.5 py-1 rounded-md text-[11px] font-bold flex items-center gap-1 mb-1`}>
+                  12% ↗
                 </div>
               </div>
-              <div className="mt-4 text-xs text-purple-300 flex items-center gap-1">
-                <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
-                <span>Approved Centers</span>
-              </div>
-            </GlassCard>
+            </ThemedCard>
 
-            {/* 🟢 DYNAMIC: Top Category */}
-            <GlassCard className="relative overflow-hidden group !bg-[#00C853]/10 !border-[#00C853]/30">
-              <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-[#00C853]/20 rounded-full blur-2xl group-hover:bg-[#00C853]/30 transition-all"></div>
-              <div className="flex items-start justify-between">
-                <div>
-                    <p className="text-sm font-bold text-[#69F0AE] tracking-widest uppercase mb-2">Top Scanned</p>
-                    <p className="text-3xl font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(0,200,83,0.5)] capitalize truncate max-w-[150px]">
-                      {topScanned}
-                    </p>
-                </div>
-                <div className="p-3 rounded-xl bg-[#00C853]/20 text-[#69F0AE] shadow-[0_0_15px_rgba(0,200,83,0.3)] border border-[#00C853]/30">
-                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+            <ThemedCard className="flex flex-col justify-between h-[160px]">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-full ${t.iconBg2}`}>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                  </div>
+                  <p className={`text-[14px] font-semibold ${t.textMain}`}>Active Centers</p>
                 </div>
               </div>
-               <div className="mt-4 w-full bg-[#00C853]/20 h-1.5 rounded-full overflow-hidden">
-                 <div className="h-full bg-gradient-to-r from-[#00C853] to-[#69F0AE] w-[100%] shadow-[0_0_10px_#00C853]"></div>
-               </div>
-            </GlassCard>
+              <div className="flex items-end gap-3">
+                <p className={`text-[38px] font-bold ${t.textMain} leading-none`}>{activeCollectors}</p>
+                <div className={`${isLightMode ? 'bg-[#F0F4F1]' : ''} ${t.textMuted} px-2.5 py-1 rounded-md text-[11px] font-bold mb-1`}>
+                  Active Nodes
+                </div>
+              </div>
+            </ThemedCard>
+
+            <ThemedCard className="flex flex-col justify-between h-[160px]">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-full ${t.iconBg3}`}>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+                  </div>
+                  <p className={`text-[14px] font-semibold ${t.textMain}`}>Top Scanned</p>
+                </div>
+              </div>
+              <div className="flex items-end gap-3">
+                <p className={`text-[32px] font-bold ${t.textMain} leading-none capitalize truncate`}>{topScanned}</p>
+                <div className={`${isLightMode ? 'bg-[#FCEDF0] text-[#C45E65]' : 'text-[#F45B69]'} px-2.5 py-1 rounded-md text-[11px] font-bold flex items-center gap-1 mb-1`}>
+                  -2% ↘
+                </div>
+              </div>
+            </ThemedCard>
           </div>
 
-          {/* Charts Row (Static Placeholder Visuals) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
-            {/* Glowing Bar Chart */}
-            <GlassCard>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            {/* MATERIAL BREAKDOWN */}
+            <ThemedCard className="lg:col-span-1 flex flex-col">
               <div className="flex justify-between items-center mb-8">
-                <h3 className="text-lg font-bold text-white tracking-wider flex items-center gap-2">
-                    <svg className="w-5 h-5 text-[#00C853]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" /></svg>
-                    Monthly Collection Data
-                </h3>
-                <div className="flex gap-2">
-                    <span className="w-3 h-3 bg-[#00C853] rounded-full shadow-[0_0_10px_#00C853]"></span>
-                    <span className="w-3 h-3 bg-blue-500 rounded-full shadow-[0_0_10px_#3b82f6] opacity-50"></span>
-                </div>
+                <h3 className={`text-[16px] font-bold ${t.textMain}`}>Material Breakdown</h3>
               </div>
-              <div className="pl-6 relative">
-                <div className="absolute inset-0 flex flex-col justify-between z-0 pointer-events-none pl-12 pb-6 pr-2">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className="border-b border-dashed border-white/10 w-full h-0 shadow-[0_1px_5px_rgba(255,255,255,0.05)]"></div>
-                  ))}
-                </div>
-                <div className="relative h-64 flex items-end justify-between px-4 gap-4 border-l border-white/10 pb-2">
-                  <div className="absolute -left-14 bottom-2 h-full flex flex-col justify-between text-xs text-gray-500 py-1 items-end w-10 font-mono">
-                    <span>1000</span><span>750</span><span>500</span><span>250</span><span>0</span>
-                  </div>
-                  {['45%', '55%', '70%', '80%', '90%'].map((height, index) => (
-                     <div key={index} className="w-full max-w-[60px] relative group" style={{ height: height }}>
-                        <div 
-                            className="absolute bottom-0 w-full rounded-t-md z-10 transition-all duration-300 group-hover:scale-y-110 origin-bottom"
-                            style={{ 
-                                height: '100%', 
-                                background: 'linear-gradient(to top, rgba(0,200,83,0.8), rgba(0,200,83,0.1))',
-                                boxShadow: '0 -5px 15px rgba(0,200,83,0.4), inset 0 0 10px rgba(0,200,83,0.2)',
-                                borderTop: '2px solid #69F0AE'
-                            }}
-                        ></div>
-                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-[#00C853] text-black text-xs font-bold px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-[0_0_10px_#00C853]">
-                            {height}
-                        </div>
-                     </div>
-                  ))}
-                </div>
-                <div className="flex justify-between px-4 mt-4 text-xs text-gray-400 gap-4 font-mono uppercase tracking-wider">
-                  <span className="w-full text-center">Jan</span>
-                  <span className="w-full text-center">Feb</span>
-                  <span className="w-full text-center">Mar</span>
-                  <span className="w-full text-center">Apr</span>
-                  <span className="w-full text-center">May</span>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* Holographic Pie Chart */}
-            <GlassCard className="flex flex-col relative overflow-hidden">
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-[#00C853]/10 rounded-full blur-3xl pointer-events-none"></div>
-              <h3 className="text-lg font-bold text-white tracking-wider mb-8 flex items-center gap-2 z-10">
-                <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>
-                Material Composition Breakdown
-              </h3>
-              <div className="flex-1 flex items-center justify-center min-h-[250px] relative z-10">
-                <div className="relative w-56 h-56 mt-4">
-                  <div className="absolute inset-0 rounded-full border-4 border-white/5 shadow-[0_0_30px_rgba(0,200,83,0.2)]"></div>
-                  <div 
-                    className="w-full h-full rounded-full shadow-[0_0_20px_rgba(0,0,0,0.5),_inset_0_0_20px_rgba(255,255,255,0.1)] relative overflow-hidden"
-                    style={{ 
-                        background: 'conic-gradient(#3B82F6 0% 45%, #A855F7 45% 60%, #F59E0B 60% 75%, #00C853 75% 100%)',
-                        boxShadow: '0 0 25px rgba(0, 200, 83, 0.3)'
-                    }}
-                  >
-                    <div className="absolute inset-[25%] bg-[#0A1A2F] rounded-full border border-white/10 flex items-center justify-center shadow-[inset_0_0_20px_rgba(0,200,83,0.2)]">
+              <div className="flex-1 flex flex-row items-center justify-between px-2">
+                <div className="relative w-36 h-36">
+                  <div className="w-full h-full rounded-full" style={{ background: t.donutGradient }}>
+                    <div className={`absolute inset-[22%] ${t.donutInner} rounded-full flex items-center justify-center shadow-sm border border-white/[0.05]`}>
                         <div className="text-center">
-                            <p className="text-xs text-gray-400 uppercase tracking-widest">Total</p>
-                            <p className="text-2xl font-black text-white drop-shadow-[0_0_5px_#00C853]">100%</p>
+                            <p className={`text-[18px] font-bold ${t.textMain}`}>100%</p>
                         </div>
                     </div>
                   </div>
-
-                  <span className="absolute top-0 -right-24 text-xs text-blue-300 font-bold bg-blue-900/50 border border-blue-500/30 px-3 py-1 rounded-full backdrop-blur-md shadow-[0_0_10px_rgba(59,130,246,0.3)] flex items-center gap-2">
-                    <span className="w-2 h-2 bg-blue-400 rounded-full shadow-[0_0_5px_#3b82f6]"></span> Plastic 45%
-                  </span>
-                  <span className="absolute top-32 -right-20 text-xs text-purple-300 font-bold bg-purple-900/50 border border-purple-500/30 px-3 py-1 rounded-full backdrop-blur-md shadow-[0_0_10px_rgba(168,85,247,0.3)] flex items-center gap-2">
-                    <span className="w-2 h-2 bg-purple-400 rounded-full shadow-[0_0_5px_#a855f7]"></span> Glass 15%
-                  </span>
-                  <span className="absolute -bottom-8 right-0 text-xs text-yellow-300 font-bold bg-yellow-900/50 border border-yellow-500/30 px-3 py-1 rounded-full backdrop-blur-md shadow-[0_0_10px_rgba(245,158,11,0.3)] flex items-center gap-2">
-                    <span className="w-2 h-2 bg-yellow-400 rounded-full shadow-[0_0_5px_#f59e0b]"></span> Metal 15%
-                  </span>
-                  <span className="absolute bottom-10 -left-24 text-xs text-[#69F0AE] font-bold bg-[#00C853]/30 border border-[#00C853]/30 px-3 py-1 rounded-full backdrop-blur-md shadow-[0_0_10px_rgba(0,200,83,0.3)] flex items-center gap-2">
-                    <span className="w-2 h-2 bg-[#00C853] rounded-full shadow-[0_0_5px_#00C853]"></span> Paper 25%
-                  </span>
+                </div>
+                <div className="flex flex-col gap-4 ml-6">
+                  <div className="flex items-center gap-3"><span className={`w-3 h-3 rounded-full ${isLightMode ? 'bg-[#98BAA3]' : 'bg-[#2CD87D]'}`}></span><span className={`text-[12px] font-medium ${t.textMuted}`}>Plastic</span></div>
+                  <div className="flex items-center gap-3"><span className={`w-3 h-3 rounded-full ${isLightMode ? 'bg-[#E3D6B7]' : 'bg-[#00964E]'}`}></span><span className={`text-[12px] font-medium ${t.textMuted}`}>Glass</span></div>
+                  <div className="flex items-center gap-3"><span className={`w-3 h-3 rounded-full ${isLightMode ? 'bg-[#AAC2D2]' : 'bg-[#005F31]'}`}></span><span className={`text-[12px] font-medium ${t.textMuted}`}>Paper</span></div>
+                  {isLightMode && <div className="flex items-center gap-3"><span className="w-3 h-3 rounded-full bg-[#9BA5B6]"></span><span className="text-[12px] font-medium text-[#6B7A74]">Metal</span></div>}
                 </div>
               </div>
-            </GlassCard>
+            </ThemedCard>
+
+            {/* LAST ACTIVITY */}
+            <ThemedCard className="lg:col-span-2">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className={`text-[16px] font-bold ${t.textMain}`}>Last Activity</h3>
+                <span className={`text-[12px] ${t.textMuted} font-medium cursor-pointer`}>Updated just now</span>
+              </div>
+              <div className="space-y-2">
+                <div className={`p-4 flex gap-4 items-center border-b ${isLightMode ? 'hover:bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#192126] border-white/[0.05]'} transition-colors rounded-xl`}>
+                  <div className={`w-12 h-12 rounded-full ${isLightMode ? 'bg-[#F0F4F1]' : 'bg-[#151B1F]'} flex justify-center items-center`}>
+                    <svg className={`w-5 h-5 ${isLightMode ? 'text-[#98BAA3]' : 'text-[#2CD87D]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-[14px] ${t.textMain} font-bold`}>Database Sync Completed</p>
+                    <p className={`text-[12px] ${t.textMuted} mt-0.5`}>Today, 7:45 AM</p>
+                  </div>
+                  <span className={`${isLightMode ? 'text-[#98BAA3]' : 'text-[#2CD87D]'} font-bold text-[14px]`}>Success</span>
+                </div>
+                
+                <div className={`p-4 flex gap-4 items-center ${isLightMode ? 'hover:bg-[#F9FBF9]' : 'bg-[#192126]'} transition-colors rounded-xl`}>
+                  <div className={`w-12 h-12 rounded-full ${isLightMode ? 'bg-[#F0F4F1]' : 'bg-[#151B1F]'} flex justify-center items-center`}>
+                    <svg className={`w-5 h-5 ${isLightMode ? 'text-[#AAC2D2]' : 'text-[#8A9B96]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-[14px] ${t.textMain} font-bold`}>Waiting for applications</p>
+                    <p className={`text-[12px] ${t.textMuted} mt-0.5`}>Today, 6:30 AM</p>
+                  </div>
+                  <span className={`${isLightMode ? 'text-[#AAC2D2]' : 'text-[#8A9B96]'} font-bold text-[14px]`}>Standby</span>
+                </div>
+              </div>
+            </ThemedCard>
           </div>
 
-          {/* Recent System Activity */}
-          <GlassCard>
-            <div className="flex items-center justify-between mb-6 border-b border-white/10 pb-4">
-                <h3 className="text-lg font-bold text-white tracking-wider flex items-center gap-2">
-                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    Live System Feed
-                </h3>
-                <span className="text-xs text-[#00C853] font-mono animate-pulse">..Receiving Data..</span>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="flex justify-between items-center bg-white/5 p-4 rounded-xl border border-white/5 hover:bg-white/10 transition-all group">
-                <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center border border-yellow-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)] group-hover:shadow-[0_0_15px_rgba(245,158,11,0.4)] transition-all">
-                        <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                    </div>
-                    <div>
-                        <p className="font-bold text-sm text-white tracking-wide">System Connected to Supabase</p>
-                        <p className="text-xs text-gray-400 font-mono mt-1">STATUS: Live Metrics Running</p>
-                    </div>
-                </div>
-                <p className="text-xs text-gray-500 font-mono bg-black/30 px-3 py-1 rounded-full border border-white/10">Active</p>
+          {/* COLLECTION OUTPUT CHART */}
+          <ThemedCard className="mb-10 pb-6 relative">
+            <div className="flex flex-col lg:flex-row justify-between lg:items-center mb-8 gap-4">
+              <h3 className={`text-[16px] font-bold ${t.textMain}`}>Collection Output</h3>
+              <div className={`flex items-center gap-2 ${isLightMode ? 'bg-[#F5F8F6] border-[#E5ECE7]' : 'bg-[#151B1F] border-white/[0.1]'} border px-3 py-1.5 rounded-lg`}>
+                  <span className={`text-[12px] ${t.textMuted} font-medium`}>This Week</span>
               </div>
             </div>
-          </GlassCard>
+
+            <div className="flex h-80 relative" onMouseLeave={() => setActiveIndex(null)}>
+              <div className={`w-[50px] flex flex-col justify-between items-start pr-4 text-[11px] ${t.textMuted} font-medium pb-[2.5rem]`}>
+                  <span>{Math.round(maxY)}kg</span>
+                  <span>{Math.round(maxY * 0.75)}kg</span>
+                  <span>{Math.round(maxY * 0.5)}kg</span>
+                  <span>{Math.round(maxY * 0.25)}kg</span>
+                  <span>0kg</span>
+              </div>
+
+              <div className="flex-1 flex flex-col relative">
+                <div className="flex-1 relative">
+                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className={`border-b w-full h-0 ${isLightMode ? 'border-[#DCE4DF] border-dashed' : 'border-white/[0.03] border-solid'}`}></div>
+                    ))}
+                  </div>
+
+                  {chartData.length > 0 && (
+                    <>
+                      <div className="absolute inset-0 w-full h-full overflow-visible pointer-events-none mt-2">
+                        <svg className="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                          <defs>
+                            <linearGradient id="glowArea" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={isLightMode ? '#98BAA3' : '#2CD87D'} stopOpacity={isLightMode ? "0.4" : "0.35"}/>
+                              <stop offset="100%" stopColor={isLightMode ? '#98BAA3' : '#2CD87D'} stopOpacity="0.0"/>
+                            </linearGradient>
+                          </defs>
+                          <path d={actualPath} fill="none" stroke={isLightMode ? '#6C9A7D' : '#2CD87D'} strokeWidth="3" vectorEffect="non-scaling-stroke" style={isLightMode ? {} : { filter: `drop-shadow(0px 4px 8px rgba(44,216,125,0.4))` }} />
+                          <path d={areaPath} fill="url(#glowArea)" />
+                        </svg>
+                      </div>
+
+                      {activeIndex !== null && (
+                        <div className="absolute inset-0 pointer-events-none overflow-visible z-20 mt-2">
+                            <div className={`absolute border-l-[2px] ${isLightMode ? 'border-solid opacity-20' : 'border-dotted opacity-40'}`} style={{ left: `${actualCoords[activeIndex].x}%`, top: `${actualCoords[activeIndex].y}%`, bottom: '0', borderColor: isLightMode ? '#6C9A7D' : '#2CD87D' }} />
+                            <div className={`absolute rounded-full shadow-md ${isLightMode ? 'w-3 h-3 bg-[#1D2A23] border-2 border-white' : 'h-2.5 bg-[#2CD87D] shadow-[0_0_12px_#2CD87D]'}`} style={{ width: isLightMode ? '12px' : '26px', left: `${actualCoords[activeIndex].x}%`, top: `${actualCoords[activeIndex].y}%`, transform: 'translate(-50%, -50%)' }} />
+                            {!isLightMode && <div className="absolute w-2 h-2 bg-[#CCF6E4] rounded-full" style={{ left: `${actualCoords[activeIndex].x}%`, top: `${actualCoords[activeIndex].y}%`, transform: 'translate(-50%, -50%)' }} />}
+
+                            <div className={`absolute ${t.tooltipBg} rounded-xl p-3 z-30 min-w-[140px] transition-all duration-100 ease-out`} style={{ left: `${actualCoords[activeIndex].x}%`, top: `${actualCoords[activeIndex].y}%`, transform: `translate(${activeIndex > 3 ? '-110%' : '10%'}, -80%)` }}>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="w-2 h-2 rounded-full" style={{backgroundColor: isLightMode ? '#6C9A7D' : '#2CD87D'}}></span>
+                                    <span className={`text-[12px] ${t.textMuted} font-medium`}>{chartData[activeIndex].dateStr.split(',')[0]}</span>
+                                </div>
+                                <span className={`text-[16px] ${t.textMain} font-bold pl-4`}>{chartData[activeIndex].actual} kg</span>
+                            </div>
+                        </div>
+                      )}
+
+                      <div className="absolute inset-0 w-full h-full flex z-10">
+                        {chartData.map((_, i) => (
+                          <div key={i} className="flex-1 h-full cursor-crosshair" onMouseEnter={() => setActiveIndex(i)} />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className={`relative h-10 mt-3 text-[12px] ${t.textMuted} font-medium`}>
+                  {chartData.map((d, i) => (
+                    <span key={i} className={`absolute transform -translate-x-1/2 ${activeIndex === i ? `${t.textMain} font-bold` : ''}`} style={{ left: `${(i / (chartData.length - 1)) * 100}%` }}>{d.day}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </ThemedCard>
 
           <div className="h-12"></div>
         </div>

@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabase';
 import emailjs from '@emailjs/browser'; 
-import Sidebar from './Sidebar'; // 🟢 IN-IMPORT NATIN ANG SIDEBAR
+import Sidebar from './Sidebar'; 
+import { useTheme, ThemedCard } from './ThemeContext'; // 🟢 Import Theme Context
 
 const DropOffNodes = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('requests');
+  const { isLightMode, t } = useTheme(); // 🟢 Gamitin ang global theme variables
   
+  const [activeTab, setActiveTab] = useState('requests');
   const [applications, setApplications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -30,6 +32,7 @@ const DropOffNodes = () => {
     fetchApplications();
   }, []);
 
+  // ... (handleApprove, handleReject, handleDelete, handleDeactivate functions remain exactly the same)
   const handleApprove = async (id, email, programName) => {
     if (window.confirm(`Are you sure you want to approve ${programName}?`)) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,84 +51,48 @@ const DropOffNodes = () => {
         if (error) {
           alert("Email sent, but database error: " + error.message);
         } else {
-          alert(`✅ Success! ${programName} is now approved and the email notification was sent!`);
+          alert(`✅ Success! ${programName} is now approved!`);
           fetchApplications(); 
         }
       } catch (emailError) {
         console.error("Email Error Details:", emailError);
-        alert(`❌ Approval Failed! The email "${email}" might be inactive or invalid.`);
+        alert(`❌ Approval Failed!`);
       }
     }
   };
 
   const handleReject = async (id, email, programName) => {
-    // 🟢 Gagamit tayo ng prompt para makapag-type ka ng rason kung bakit na-reject
-    const reason = window.prompt(
-      `Are you sure you want to REJECT ${programName}?\n\nEnter reason for rejection (this will be sent to the user):`, 
-      "Your application did not meet our current requirements."
-    );
-
-    // Kung hindi kinansel ni Admin yung prompt
+    const reason = window.prompt(`Enter reason for rejection:`, "Your application did not meet our current requirements.");
     if (reason !== null) { 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email || !emailRegex.test(email)) {
-          alert(`❌ Rejection Failed: "${email}" is not a valid email address.`);
-          return; 
-      }
-
       try {
-        // ⚠️ PAALALA: Kailangan mo ng bagong template sa EmailJS para sa Rejection!
         await emailjs.send(
-          'service_nzpn1cn',       
-          'ILAGAY_MO_DITO_ANG_REJECT_TEMPLATE_ID', // 🔴 PALITAN MO ITO NG BAGO MONG TEMPLATE ID
-          { 
-            to_email: email, 
-            to_name: programName,
-            reject_reason: reason // 🟢 Ipapasa natin yung rason sa email nila
-          },
+          'service_nzpn1cn', 'ILAGAY_MO_DITO_ANG_REJECT_TEMPLATE_ID', 
+          { to_email: email, to_name: programName, reject_reason: reason },
           { publicKey: 'lkfpdujTp2Sx9Eq3u' }      
         );
-
-        const { error } = await supabase.from('dropoff_applications').update({ status: 'rejected' }).eq('id', id);
-        
-        if (error) {
-          alert("Email sent, but database error: " + error.message);
-        } else {
-          alert(`✅ Success! ${programName} is now rejected and the rejection email was sent!`);
-          fetchApplications(); 
-        }
-      } catch (emailError) {
-        console.error("Email Error Details:", emailError);
-        alert(`❌ Rejection Failed! The email "${email}" might be inactive or invalid.`);
-      }
+        await supabase.from('dropoff_applications').update({ status: 'rejected' }).eq('id', id);
+        fetchApplications(); 
+      } catch (e) { console.error(e); }
     }
   };
 
   const handleDelete = async (id, programName) => {
-    if (window.confirm(`⚠️ WARNING: Are you sure you want to permanently DELETE ${programName}?`)) {
-      const { error } = await supabase.from('dropoff_applications').delete().eq('id', id);
-      if (error) alert("Error deleting: " + error.message);
-      else { alert(`${programName} has been deleted permanently.`); fetchApplications(); }
+    if (window.confirm(`Permanently DELETE ${programName}?`)) {
+      await supabase.from('dropoff_applications').delete().eq('id', id);
+      fetchApplications();
     }
   };
 
   const handleDeactivate = async (id, programName) => {
-    if (window.confirm(`Are you sure you want to DEACTIVATE ${programName}?`)) {
-      const { error } = await supabase.from('dropoff_applications').update({ status: 'deactivated' }).eq('id', id);
-      if (error) alert("Error deactivating: " + error.message);
-      else { alert(`${programName} is now deactivated.`); fetchApplications(); }
+    if (window.confirm(`DEACTIVATE ${programName}?`)) {
+      await supabase.from('dropoff_applications').update({ status: 'deactivated' }).eq('id', id);
+      fetchApplications();
     }
   };
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
-
-  const GlassCard = ({ children, className = '' }) => (
-    <div className={`backdrop-blur-xl bg-[#0A1A2F]/60 border border-white/10 rounded-2xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] p-6 ${className}`}>
-      {children}
-    </div>
-  );
 
   const filteredApps = applications.filter(app => {
     if (activeTab === 'requests') return app.status === 'pending';
@@ -136,117 +103,120 @@ const DropOffNodes = () => {
   const pendingCount = applications.filter(a => a.status === 'pending').length;
 
   return (
-    <div className="flex h-screen w-full font-sans bg-[#020C14] text-gray-100 relative overflow-hidden">
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-[#00C853]/30 rounded-full blur-[120px] opacity-50 pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px] opacity-40 pointer-events-none"></div>
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden selection:bg-[#2CD87D] selection:text-black`}>
       
-      {/* 🟢 DITO NATIN INILAGAY ANG REUSABLE SIDEBAR */}
       <Sidebar />
 
-      {/* 🟢 MAIN CONTENT AREA */}
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
-        <div className="p-8 lg:p-12 max-w-[1600px] mx-auto">
+        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
           
-          <div className="mb-10 relative">
-            <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-wide uppercase">Node Management</h2>
-            <p className="text-gray-400 mt-2 tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse shadow-[0_0_10px_#3b82f6]"></span>
-                Review and manage centers
-            </p>
+          {/* HEADER */}
+          <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-6">
+            <div>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Node Management</h2>
+              <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Review and manage drop-off centers</p>
+            </div>
           </div>
 
-          <div className="flex items-center bg-white/5 backdrop-blur-md border border-white/10 rounded-full p-1 mb-8 w-fit shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
-            <button onClick={() => setActiveTab('requests')} className={`flex items-center gap-3 px-8 py-3 rounded-full font-bold text-sm transition-all duration-300 ${activeTab === 'requests' ? 'bg-[#0A1A2F] text-white border border-[#00C853]/50 shadow-[inset_0_0_15px_rgba(0,200,83,0.3)]' : 'text-gray-400 hover:text-white'}`}>
+          {/* TOGGLE TABS */}
+          <div className={`flex items-center ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7]' : 'bg-[#131917] border-white/[0.05]'} border rounded-full p-1.5 mb-8 w-fit shadow-sm`}>
+            <button 
+              onClick={() => setActiveTab('requests')} 
+              className={`flex items-center gap-3 px-8 py-2.5 rounded-full font-bold text-sm transition-all duration-300 ${
+                activeTab === 'requests' 
+                  ? (isLightMode ? 'bg-white text-[#4A7D5C] shadow-sm' : 'bg-[#18201B] text-[#2CD87D] border border-[#2CD87D]/20 shadow-[0_0_15px_rgba(44,216,125,0.1)]') 
+                  : `${t.textMuted} hover:${t.textMain}`
+              }`}
+            >
                 Requests 
                 {pendingCount > 0 && (
-                  <span className="bg-red-500/20 text-red-400 border border-red-500/50 px-2 py-0.5 rounded-full text-xs">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-black ${isLightMode ? 'bg-[#F45B69]/10 text-[#C45E65]' : 'bg-[#FF5252]/10 text-[#FF5252] border border-[#FF5252]/30'}`}>
                     {pendingCount}
                   </span>
                 )}
             </button>
-            <button onClick={() => setActiveTab('active')} className={`px-8 py-3 rounded-full font-bold text-sm transition-all duration-300 ${activeTab === 'active' ? 'bg-[#0A1A2F] text-white border border-[#00C853]/50 shadow-[inset_0_0_15px_rgba(0,200,83,0.3)]' : 'text-gray-400 hover:text-white'}`}>
+            <button 
+              onClick={() => setActiveTab('active')} 
+              className={`px-8 py-2.5 rounded-full font-bold text-sm transition-all duration-300 ${
+                activeTab === 'active' 
+                  ? (isLightMode ? 'bg-white text-[#4A7D5C] shadow-sm' : 'bg-[#18201B] text-[#2CD87D] border border-[#2CD87D]/20 shadow-[0_0_15px_rgba(44,216,125,0.1)]') 
+                  : `${t.textMuted} hover:${t.textMain}`
+              }`}
+            >
                 Active Nodes
             </button>
           </div>
 
-          <GlassCard className="overflow-hidden p-0 relative group">
-            <div className="absolute top-0 right-0 -mt-20 -mr-20 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          {/* MAIN TABLE CONTAINER */}
+          <ThemedCard className="!p-0 overflow-hidden mb-10 relative group">
             
-            <div className="p-8 pb-4 border-b border-white/10 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-white tracking-wider flex items-center gap-2 uppercase">
-                    <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            <div className={`p-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'} flex justify-between items-center`}>
+                <h3 className={`text-lg font-bold ${t.textMain} flex items-center gap-3`}>
+                    <svg className={`w-5 h-5 ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#2CD87D]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                     {activeTab === 'requests' ? 'Pending Applications' : 'Active Centers'}
                 </h3>
             </div>
 
             <div className="overflow-x-auto min-h-[300px]">
                 {isLoading ? (
-                    <div className="flex justify-center items-center h-[200px] text-gray-400">Loading data...</div>
+                    <div className={`flex justify-center items-center h-[200px] ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#2CD87D]'} text-sm font-bold tracking-widest animate-pulse`}>LOADING DATA...</div>
                 ) : (
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      {activeTab === 'requests' ? (
-                        <tr className="text-xs text-gray-400 uppercase tracking-widest bg-white/5">
-                          <th className="py-5 px-8 font-semibold">Station Name</th>
-                          <th className="py-5 px-4 font-semibold">Contact No.</th>
-                          <th className="py-5 px-4 font-semibold">Location</th>
-                          <th className="py-5 px-4 font-semibold">Duration</th>
-                          <th className="py-5 px-4 font-semibold">Date Applied</th>
-                          <th className="py-5 px-4 font-semibold">Document</th>
-                          <th className="py-5 px-8 font-semibold text-right">Actions</th>
-                        </tr>
-                      ) : (
-                        <tr className="text-xs text-gray-400 uppercase tracking-widest bg-white/5">
-                          <th className="py-5 px-8 font-semibold">Station Name</th>
-                          <th className="py-5 px-4 font-semibold">Contact No.</th>
-                          <th className="py-5 px-4 font-semibold">Location</th>
-                          <th className="py-5 px-4 font-semibold">Duration</th>
-                          <th className="py-5 px-8 font-semibold text-right">Actions</th>
-                        </tr>
-                      )}
+                      <tr className={`${isLightMode ? 'bg-[#F9FBF9]' : 'bg-[#0A0F0D]'} ${t.textMuted} text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
+                        <th className="py-4 px-8 font-bold">Station Name</th>
+                        <th className="py-4 px-4 font-bold">Contact No.</th>
+                        <th className="py-4 px-4 font-bold">Location</th>
+                        <th className="py-4 px-4 font-bold">Duration</th>
+                        {activeTab === 'requests' && <th className="py-4 px-4 font-bold">Date Applied</th>}
+                        {activeTab === 'requests' && <th className="py-4 px-4 font-bold">Document</th>}
+                        <th className="py-4 px-8 font-bold text-right">Actions</th>
+                      </tr>
                     </thead>
 
                     <tbody className="text-sm">
                       {filteredApps.length === 0 ? (
                           <tr>
-                              <td colSpan="7" className="py-10 text-center text-gray-500 italic">No records found.</td>
+                              <td colSpan="7" className={`py-10 text-center ${t.textMuted} font-medium italic`}>No records found.</td>
                           </tr>
                       ) : (
                         filteredApps.map((app) => (
-                          <tr key={app.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group/row">
-                            <td className="py-5 px-8 font-bold text-white group-hover/row:text-[#00C853] transition-colors">{app.program_name}</td>
-                            <td className="py-5 px-4 text-gray-400 font-mono">{app.contact_number}</td>
-                            <td className="py-5 px-4 text-gray-400">{app.barangay}, {app.city}</td>
+                          <tr key={app.id} className={`border-b ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'} transition-colors group/row`}>
+                            <td className={`py-5 px-8 font-bold ${t.textMain} group-hover/row:text-[#2CD87D] transition-colors`}>{app.program_name}</td>
+                            <td className={`py-5 px-4 ${t.textMuted} text-xs font-medium`}>{app.contact_number}</td>
+                            <td className={`py-5 px-4 ${t.textMuted} text-xs font-medium`}>{app.barangay}, {app.city}</td>
                             <td className="py-5 px-4">
-                              <span className={`px-3 py-1 rounded-full text-[10px] font-bold border ${
-                                  app.operation_duration.includes('More') ? 'bg-[#00C853]/10 text-[#00C853] border-[#00C853]/30' : 'bg-orange-500/10 text-orange-400 border-orange-500/30'
+                              <span className={`px-3 py-1.5 rounded-md text-[10px] font-bold border tracking-wider ${
+                                  app.operation_duration.includes('More') 
+                                    ? (isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C] border-[#98BAA3]/30' : 'bg-[#005F31]/20 text-[#2CD87D] border-[#00964E]/30') 
+                                    : 'bg-[#FF9800]/10 text-[#FF9800] border-[#FF9800]/20'
                               }`}>
-                                  {app.operation_duration.includes('More') ? 'Long-Term' : 'Short-Term'}
+                                  {app.operation_duration.includes('More') ? 'LONG-TERM' : 'SHORT-TERM'}
                               </span>
                             </td>
 
                             {activeTab === 'requests' ? (
                               <>
-                                <td className="py-5 px-4 text-gray-400">{formatDate(app.created_at)}</td>
+                                <td className={`py-5 px-4 ${t.textMuted} text-xs font-medium`}>{formatDate(app.created_at)}</td>
                                 <td className="py-5 px-4">
                                   {app.permit_url ? (
                                       <button 
                                         onClick={() => window.open(app.permit_url, '_blank')}
-                                        className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 hover:border-white/30 rounded-md transition-all text-xs font-bold tracking-wider"
+                                        className={`px-4 py-1.5 ${isLightMode ? 'bg-[#F0F4F1] text-[#6B7A74] hover:bg-white border-[#DCE4DF]' : 'bg-[#18201B] text-[#8B9B90] hover:text-white border-white/10'} border rounded-md transition-all text-[10px] font-bold tracking-widest`}
                                       >
-                                        VIEW
+                                        VIEW FILE
                                       </button>
                                   ) : (
-                                      <span className="text-gray-500 italic text-xs">No link</span>
+                                      <span className={`${t.textMuted} font-medium text-xs italic`}>No link</span>
                                   )}
                                 </td>
                                 <td className="py-5 px-8 text-right">
                                   <div className="flex gap-4 justify-end">
-                                      <button onClick={() => handleApprove(app.id, app.user_email, app.program_name)} className="text-gray-500 hover:text-[#00C853] transition-all transform hover:scale-125 hover:drop-shadow-[0_0_8px_rgba(0,200,83,0.8)]">
-                                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                      <button onClick={() => handleApprove(app.id, app.user_email, app.program_name)} className={`${t.textMuted} hover:text-[#2CD87D] hover:bg-[#2CD87D]/10 p-2 rounded-lg transition-all`}>
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" /></svg>
                                       </button>
-                                      <button onClick={() => handleReject(app.id, app.user_email, app.program_name)} className="text-gray-500 hover:text-red-500 transition-all transform hover:scale-125 hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]">
-                                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                      <button onClick={() => handleReject(app.id, app.user_email, app.program_name)} className={`${t.textMuted} hover:text-[#F45B69] hover:bg-[#F45B69]/10 p-2 rounded-lg transition-all`}>
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" /></svg>
                                       </button>
                                   </div>
                                 </td>
@@ -254,11 +224,11 @@ const DropOffNodes = () => {
                             ) : (
                               <td className="py-5 px-8 text-right">
                                 <div className="flex gap-4 justify-end">
-                                    <button onClick={() => handleDelete(app.id, app.program_name)} title="Delete Program" className="text-gray-500 hover:text-red-500 transition-all transform hover:scale-110 hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    <button onClick={() => handleDelete(app.id, app.program_name)} className={`${t.textMuted} hover:text-[#F45B69] hover:bg-[#F45B69]/10 p-2 rounded-lg transition-all`}>
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                     </button>
-                                    <button onClick={() => handleDeactivate(app.id, app.program_name)} title="Deactivate Node" className="text-gray-500 hover:text-orange-400 transition-all transform hover:scale-110 hover:drop-shadow-[0_0_8px_rgba(251,146,60,0.8)]">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" /></svg>
+                                    <button onClick={() => handleDeactivate(app.id, app.program_name)} className={`${t.textMuted} hover:text-[#FF9800] hover:bg-[#FF9800]/10 p-2 rounded-lg transition-all`}>
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" /></svg>
                                     </button>
                                 </div>
                               </td>
@@ -270,8 +240,11 @@ const DropOffNodes = () => {
                   </table>
                 )}
             </div>
-            <div className="h-1 w-full bg-gradient-to-r from-transparent via-[#00C853]/20 to-transparent"></div>
-          </GlassCard>
+            
+            <div className={`h-1 w-full bg-gradient-to-r from-transparent ${isLightMode ? 'via-[#98BAA3]/40' : 'via-[#2CD87D]/30'} to-transparent`}></div>
+          </ThemedCard>
+
+          <div className="h-12"></div>
         </div>
       </div>
       

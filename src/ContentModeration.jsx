@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabase'; 
 import Sidebar from './Sidebar';
 
+
 export default function ContentModeration() {
   const [activeTab, setActiveTab] = useState('all_posts');
   const [posts, setPosts] = useState([]);

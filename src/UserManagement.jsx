@@ -2,40 +2,33 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabase'; 
 import Sidebar from './Sidebar'; 
+import { useTheme, ThemedCard } from './ThemeContext'; // 🟢 Import ang Theme Context
 
 export default function UserManagement() {
   const navigate = useNavigate();
+  const { isLightMode, t } = useTheme(); // 🟢 Gamitin ang theme variables
+  
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // 🟢 DITO NATIN I-SASAVE KUNG SINO ANG MGA ONLINE NGAYON
   const [onlineUserIds, setOnlineUserIds] = useState(new Set());
 
   useEffect(() => {
     fetchUsers();
 
-    // 🟢 MAKINIG TAYO SA INVISIBLE ROOM KUNG SINO ANG ONLINE
     const channel = supabase.channel('app-presence');
-
     channel.on('presence', { event: 'sync' }, () => {
       const state = channel.presenceState();
       const activeIds = new Set();
-
-      // Kunin lahat ng ID ng mga users na nasa room ngayon
       Object.keys(state).forEach(key => {
         const presenceData = state[key][0];
         if (presenceData && presenceData.user_id) {
           activeIds.add(presenceData.user_id);
         }
       });
-
-      // I-update ang screen natin
       setOnlineUserIds(activeIds);
     });
-
     channel.subscribe();
 
-    // Kapag umalis ka sa Admin page, patayin ang listener
     return () => {
       supabase.removeChannel(channel);
     };
@@ -59,13 +52,12 @@ export default function UserManagement() {
   };
 
   const handleDeleteUser = async (userId, userName) => {
-    const confirmDelete = window.confirm(`Are you sure you want to DELETE ${userName || 'this user'}? This action cannot be undone.`);
+    const confirmDelete = window.confirm(`Are you sure you want to DELETE ${userName || 'this user'}?`);
     if (confirmDelete) {
       try {
         const { error } = await supabase.from('profiles').delete().eq('id', userId);
         if (error) throw error;
         setUsers(users.filter(user => user.id !== userId));
-        alert("User deleted successfully!");
       } catch (error) {
         console.error("Error deleting user:", error.message);
       }
@@ -78,122 +70,114 @@ export default function UserManagement() {
     return new Date(user.created_at) > oneWeekAgo;
   }).length;
 
-  // 🟢 ETO NA YUNG BAGONG LOGIC! 
-  // Titignan na lang niya kung nasa listahan ba ng mga online yung user ngayon
-  const checkIfActive = (user) => {
-    return onlineUserIds.has(user.id);
-  };
-
-  const GlassCard = ({ children, className = '' }) => (
-    <div className={`backdrop-blur-xl bg-[#0A1A2F]/60 border border-white/10 rounded-2xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] p-6 ${className}`}>
-      {children}
-    </div>
-  );
+  const checkIfActive = (user) => onlineUserIds.has(user.id);
 
   return (
-    <div className="flex h-screen w-full font-sans bg-[#020C14] text-gray-100 relative overflow-hidden">
+    // 🟢 Dinamiko na ang background color gamit ang t.bg
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden selection:bg-[#3CD085] selection:text-black`}>
       
-      {/* Ambient Background Lights */}
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-[#00C853]/30 rounded-full blur-[120px] opacity-50 pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px] opacity-40 pointer-events-none"></div>
-
       <Sidebar />
 
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
-        <div className="p-8 lg:p-12 max-w-[1600px] mx-auto">
+        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
           
-          <div className="mb-10 relative">
-            <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-wide uppercase">USER MANAGEMENT</h2>
-            <p className="text-gray-400 mt-2 tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 bg-[#00C853] rounded-full animate-pulse shadow-[0_0_10px_#00C853]"></span>
-                Live User Database
-            </p>
-            <div className="absolute bottom-[-10px] left-0 w-32 h-1 bg-gradient-to-r from-[#00C853] to-transparent rounded-full"></div>
+          {/* HEADER */}
+          <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-6">
+            <div>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>User Management</h2>
+              <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Live User Database and Account Registry</p>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
-            <GlassCard>
-              <h3 className="text-gray-400 text-xs font-bold tracking-widest mb-1 uppercase">Total Registered Users</h3>
-              <p className="text-4xl font-bold text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.2)]">{users.length}</p>
-            </GlassCard>
+          {/* TOP STATS - Gamit ang ThemedCard */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <ThemedCard className="flex flex-col justify-between h-[140px]">
+              <p className={`text-[13px] font-semibold ${t.textMain} tracking-wide`}>Total Registered Users</p>
+              <p className={`text-[40px] font-bold ${t.textMain} leading-none mt-auto`}>{users.length}</p>
+            </ThemedCard>
 
-            <GlassCard className="relative overflow-hidden group !bg-[#00C853]/10 !border-[#00C853]/30">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-[#00C853]/20 rounded-bl-full pointer-events-none"></div>
-              <h3 className="text-[#00C853] text-xs font-bold tracking-widest mb-1 uppercase">Recently Created</h3>
-              <p className="text-4xl font-bold text-white drop-shadow-[0_0_10px_rgba(0,200,83,0.5)]">+{recentUsersCount}</p>
-            </GlassCard>
+            <ThemedCard className={`flex flex-col justify-between h-[140px] border ${isLightMode ? 'bg-[#E4EFE8]/30 border-[#98BAA3]/20' : 'bg-gradient-to-br from-[#151B1F] to-[#122119] border-[#3CD085]/20'}`}>
+              <p className={`text-[13px] font-semibold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#3CD085]'} tracking-wide`}>Recently Created</p>
+              <p className={`text-[40px] font-bold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#3CD085]'} leading-none mt-auto`}>+{recentUsersCount}</p>
+            </ThemedCard>
 
-            <GlassCard>
-              <h3 className="text-gray-400 text-xs font-bold tracking-widest mb-1 uppercase">Active Users</h3>
-              <p className="text-4xl font-bold text-white drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">
-                {users.filter(u => checkIfActive(u)).length}  
-              </p>
-            </GlassCard>
+            <ThemedCard className="flex flex-col justify-between h-[140px]">
+              <p className={`text-[13px] font-semibold ${t.textMain} tracking-wide`}>Active Online</p>
+              <div className="mt-auto flex items-center gap-3">
+                <p className={`text-[40px] font-bold ${t.textMain} leading-none`}>
+                  {users.filter(u => checkIfActive(u)).length}  
+                </p>
+                <span className={`w-2.5 h-2.5 rounded-full ${isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#3CD085] shadow-[0_0_8px_#3CD085]'} mt-2`}></span>
+              </div>
+            </ThemedCard>
           </div>
 
-          <GlassCard className="!p-0 overflow-hidden">
-            <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5">
-              <h2 className="text-lg font-bold text-white tracking-wider">Account Registry</h2>
-              <button onClick={fetchUsers} className="text-sm font-semibold text-[#00C853] hover:text-white transition-colors bg-[#00C853]/10 px-4 py-2 rounded-lg border border-[#00C853]/30">
-                ↻ Refresh Data
+          {/* TABLE CONTAINER */}
+          <ThemedCard className="!p-0 overflow-hidden mb-10">
+            <div className={`p-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'} flex justify-between items-center`}>
+              <h3 className={`text-lg font-bold ${t.textMain}`}>Account Registry</h3>
+              <button 
+                onClick={fetchUsers} 
+                className={`text-xs font-bold ${isLightMode ? 'text-[#4A7D5C] bg-[#98BAA3]/10' : 'text-[#3CD085] bg-[#3CD085]/10'} px-4 py-2 rounded-lg border border-current transition-all flex items-center gap-2`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Refresh Data
               </button>
             </div>
 
             <div className="overflow-x-auto">
               {loading ? (
-                <div className="p-10 text-center text-[#00C853] animate-pulse font-mono tracking-widest">LOADING USERS...</div>
+                <div className={`p-10 text-center ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#3CD085]'} animate-pulse text-sm font-bold tracking-widest uppercase`}>Loading Registry...</div>
               ) : (
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-[#020C14]/80 text-gray-400 text-xs uppercase tracking-wider">
-                      <th className="p-5 font-semibold">User Details</th>
-                      <th className="p-5 font-semibold">Role</th>
-                      <th className="p-5 font-semibold">Status</th>
-                      <th className="p-5 font-semibold">Date Joined</th>
-                      <th className="p-5 font-semibold text-right">Action</th>
+                    <tr className={`${isLightMode ? 'bg-[#F9FBF9]' : 'bg-[#101417]'} ${t.textMuted} text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
+                      <th className="px-6 py-4 font-bold">User Details</th>
+                      <th className="px-6 py-4 font-bold">Role</th>
+                      <th className="px-6 py-4 font-bold">Status</th>
+                      <th className="px-6 py-4 font-bold">Date Joined</th>
+                      <th className="px-6 py-4 font-bold text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
                     {users.length === 0 ? (
                       <tr>
-                        <td colSpan="5" className="p-8 text-center text-gray-500 font-mono">No user records found.</td>
+                        <td colSpan="5" className={`p-8 text-center ${t.textMuted}`}>No user records found.</td>
                       </tr>
                     ) : (
                       users.map((user) => (
-                        <tr key={user.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
-                          <td className="p-5">
-                            <p className="font-bold text-white tracking-wide">{user.full_name || 'Anonymous User'}</p>
-                            <p className="text-xs text-gray-400 mt-1 font-mono">{user.email}</p>
+                        <tr key={user.id} className={`border-b ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'} transition-colors group`}>
+                          <td className="px-6 py-4">
+                            <p className={`font-bold ${t.textMain}`}>{user.full_name || 'Anonymous User'}</p>
+                            <p className={`text-xs ${t.textMuted} mt-0.5`}>{user.email}</p>
                           </td>
-                          <td className="p-5">
-                            <span className="bg-blue-500/20 text-blue-300 py-1.5 px-3 rounded-md text-xs font-bold border border-blue-500/30">
+                          <td className="px-6 py-4">
+                            <span className={`${isLightMode ? 'bg-[#F0F4F1] text-[#6C9A7D]' : 'bg-[#231B2A] text-[#9A73C2]'} py-1.5 px-3 rounded-md text-[10px] font-bold border border-white/[0.05] tracking-wider`}>
                               {user.role ? user.role.toUpperCase() : 'RESIDENT'}
                             </span>
                           </td>
-                          <td className="p-5">
-                            {/* 🟢 DITO NA NAGREREFLECT YUNG REALTIME STATUS */}
+                          <td className="px-6 py-4">
                             {checkIfActive(user) ? (
-                              <span className="flex items-center text-[#00C853] text-xs font-bold transition-all duration-300">
-                                <span className="w-2 h-2 rounded-full bg-[#00C853] mr-2 shadow-[0_0_8px_#00C853] animate-pulse"></span> ONLINE
+                              <span className={`flex items-center ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#3CD085]'} text-xs font-bold`}>
+                                <span className={`w-2 h-2 rounded-full ${isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#3CD085] shadow-[0_0_8px_#3CD085]'} mr-2`}></span> Online
                               </span>
                             ) : (
-                              <span className="flex items-center text-red-500/70 text-xs font-bold transition-all duration-300">
-                                <span className="w-2 h-2 rounded-full bg-red-500/50 mr-2 shadow-[0_0_8px_rgba(239,68,68,0.5)]"></span> OFFLINE
+                              <span className={`flex items-center ${t.textMuted} text-xs font-medium`}>
+                                <span className={`w-2 h-2 rounded-full ${isLightMode ? 'bg-[#DCE4DF]' : 'bg-[#35403C]'} mr-2`}></span> Offline
                               </span>
                             )}
                           </td>
-                          <td className="p-5 text-gray-400 text-xs font-mono">
+                          <td className={`px-6 py-4 ${t.textMuted} text-xs`}>
                             {new Date(user.created_at).toLocaleDateString('en-US', {
                               year: 'numeric', month: 'short', day: 'numeric'
                             })}
                           </td>
-                          <td className="p-5 text-right">
+                          <td className="px-6 py-4 text-right">
                             <button 
                               onClick={() => handleDeleteUser(user.id, user.full_name)}
-                              title="Delete User"
-                              className="text-gray-500 hover:text-red-500 hover:bg-red-500/10 p-2 rounded-lg transition-all transform hover:scale-110 active:scale-95"
+                              className={`${t.textMuted} hover:text-[#F45B69] hover:bg-[#F45B69]/10 p-2 rounded-lg transition-all`}
                             >
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </td>
                         </tr>
@@ -203,7 +187,7 @@ export default function UserManagement() {
                 </table>
               )}
             </div>
-          </GlassCard>
+          </ThemedCard>
 
           <div className="h-12"></div>
         </div>
