@@ -1,0 +1,84 @@
+import React, { createContext, useContext, useState, useCallback } from 'react';
+import { useTheme } from './ThemeContext';
+
+const ConfirmContext = createContext();
+
+export function ConfirmProvider({ children }) {
+  const [dialog, setDialog] = useState(null);
+
+  const confirm = useCallback((options) => {
+    return new Promise((resolve) => {
+      setDialog({ ...options, resolve });
+    });
+  }, []);
+
+  const handleClose = (result) => {
+    if (dialog?.resolve) dialog.resolve(result);
+    setDialog(null);
+  };
+
+  return (
+    <ConfirmContext.Provider value={confirm}>
+      {children}
+      {dialog && <ConfirmDialog dialog={dialog} onClose={handleClose} />}
+    </ConfirmContext.Provider>
+  );
+}
+
+export function useConfirm() {
+  return useContext(ConfirmContext);
+}
+
+function ConfirmDialog({ dialog, onClose }) {
+  const { isLightMode, t } = useTheme();
+  const { title, message, confirmLabel = 'Confirm', confirmStyle = 'primary' } = dialog;
+
+  const confirmBtnClass = {
+    success: isLightMode
+      ? 'bg-[#3D7A58] text-white hover:bg-[#346849]'
+      : 'bg-[#5E9E7A] text-[#111714] hover:bg-[#6DB08A]',
+    danger: isLightMode
+      ? 'bg-red-500 text-white hover:bg-red-600'
+      : 'bg-red-500 text-white hover:bg-red-400',
+    primary: isLightMode
+      ? 'bg-[#3D7A58] text-white hover:bg-[#346849]'
+      : 'bg-[#5E9E7A] text-[#111714] hover:bg-[#6DB08A]',
+  }[confirmStyle] || '';
+
+  return (
+    <div
+      className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={() => onClose(false)}
+    >
+      <div
+        className={`w-full max-w-sm rounded-2xl border shadow-xl ${
+          isLightMode ? 'bg-white border-[#E6EBE4]' : 'bg-[#141A16] border-white/[0.07]'
+        }`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="p-6">
+          <h3 className={`text-sm font-semibold ${t.textMain} mb-2`}>{title}</h3>
+          <p className={`text-sm ${t.textMuted} leading-relaxed`}>{message}</p>
+        </div>
+        <div className={`px-6 pb-5 flex gap-3`}>
+          <button
+            onClick={() => onClose(false)}
+            className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-all ${
+              isLightMode
+                ? 'border-[#E6EBE4] text-[#7A9082] hover:bg-[#F3F6F1]'
+                : 'border-white/[0.07] text-[#5E7A67] hover:bg-white/[0.03]'
+            }`}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onClose(true)}
+            className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${confirmBtnClass}`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

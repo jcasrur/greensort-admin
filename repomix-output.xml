@@ -1,0 +1,3322 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+public/
+  vite.svg
+src/
+  assets/
+    react.svg
+  AdminAccess.jsx
+  AdminLogin.jsx
+  App.css
+  App.jsx
+  ContentModeration.jsx
+  Dashboard.jsx
+  DropOffNodes.jsx
+  GuidePanel.jsx
+  index.css
+  main.jsx
+  PresenceTracker.jsx
+  Sidebar.jsx
+  supabase.js
+  ThemeContext.jsx
+  UpcycleManagement.jsx
+  useAdminAuth.js
+  UserManagement.jsx
+.gitignore
+eslint.config.js
+index.html
+package.json
+postcss.config.js
+README.md
+tailwind.config.js
+vite.config.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/AdminAccess.jsx">
+// AdminAccess.jsx
+// ─────────────────────────────────────────────────────────────────────────────
+// RBAC Management Dashboard
+//   • Lists all super_admins and admins
+//   • Super Admin can invite either role (email must be on allowlist for super_admin)
+//   • Admin can ONLY invite admins — the super_admin option is hidden + server-blocked
+//   • Deactivate / reactivate accounts
+//   • View pending invitations
+// ─────────────────────────────────────────────────────────────────────────────
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from './supabase';
+import Sidebar from './Sidebar';
+import { useTheme, ThemedCard } from './ThemeContext';
+import { useAdminAuth } from './useAdminAuth';
+import emailjs from '@emailjs/browser';
+
+// ── tiny reusable badge ──────────────────────────────────────────────────────
+const RoleBadge = ({ role, light }) => {
+  const isSA = role === 'super_admin';
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase border ${
+      isSA
+        ? (light ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-amber-500/10 text-amber-400 border-amber-500/25')
+        : (light ? 'bg-[#E4EFE8] text-[#4A7D5C] border-[#98BAA3]/30' : 'bg-[#2CD87D]/10 text-[#2CD87D] border-[#2CD87D]/20')
+    }`}>
+      {isSA && (
+        <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+        </svg>
+      )}
+      {isSA ? 'Super Admin' : 'Admin'}
+    </span>
+  );
+};
+
+// ── status dot ───────────────────────────────────────────────────────────────
+const StatusDot = ({ active, light }) => (
+  <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${active ? (light ? 'text-[#4A7D5C]' : 'text-[#2CD87D]') : (light ? 'text-[#9B7B74]' : 'text-[#8A9B96]')}`}>
+    <span className={`w-1.5 h-1.5 rounded-full ${active ? (light ? 'bg-[#6C9A7D]' : 'bg-[#2CD87D] shadow-[0_0_6px_#2CD87D]') : (light ? 'bg-[#C5A8A0]' : 'bg-[#35403C]')}`} />
+    {active ? 'Active' : 'Inactive'}
+  </span>
+);
+
+// ── modal wrapper ─────────────────────────────────────────────────────────────
+const Modal = ({ open, onClose, children, light }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className={`w-full max-w-md rounded-3xl border shadow-2xl ${light ? 'bg-white border-[#F0F4F1]' : 'bg-[#0F1814] border-white/[0.07]'}`}
+        onClick={e => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
+// ── main component ────────────────────────────────────────────────────────────
+export default function AdminAccess() {
+  const { isLightMode, t } = useTheme();
+  const { adminUser, isSuperAdmin, isAdmin, loading: authLoading } = useAdminAuth();
+
+  const [admins, setAdmins]             = useState([]);
+  const [invitations, setInvitations]   = useState([]);
+  const [allowlist, setAllowlist]       = useState([]);
+  const [activeTab, setActiveTab]       = useState('roster');
+  const [dataLoading, setDataLoading]   = useState(true);
+
+  // invite modal state
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail]   = useState('');
+  const [inviteRole, setInviteRole]     = useState('admin');
+  const [inviteFullName, setInviteFullName] = useState('');
+  const [inviting, setInviting]         = useState(false);
+  const [inviteError, setInviteError]   = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
+
+  // allowlist modal state (super_admin only)
+  const [showAllowlistModal, setShowAllowlistModal] = useState(false);
+  const [newAllowEmail, setNewAllowEmail] = useState('');
+  const [newAllowNote, setNewAllowNote]   = useState('');
+  const [allowlistSaving, setAllowlistSaving] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    setDataLoading(true);
+    try {
+      const [{ data: adminRows }, { data: invRows }] = await Promise.all([
+        supabase.from('admin_users').select('*').order('created_at', { ascending: false }),
+        supabase.from('admin_invitations').select('*, admin_users!invited_by(email, full_name)').eq('is_used', false).order('created_at', { ascending: false }),
+      ]);
+      setAdmins(adminRows || []);
+      setInvitations((invRows || []).filter(i => new Date(i.expires_at) > new Date()));
+
+      // Only super_admin can see allowlist
+      if (isSuperAdmin) {
+        const { data: alRows } = await supabase.from('super_admin_allowlist').select('*').order('created_at', { ascending: false });
+        setAllowlist(alRows || []);
+      }
+    } catch (err) {
+      console.error('fetchData error:', err);
+    } finally {
+      setDataLoading(false);
+    }
+  }, [isSuperAdmin]);
+
+  useEffect(() => {
+    if (!authLoading && isAdmin) fetchData();
+  }, [authLoading, isAdmin, fetchData]);
+
+  // ── invite submission ──────────────────────────────────────────────────────
+  const handleInvite = async (e) => {
+    e.preventDefault();
+    setInviteError('');
+    setInviteSuccess('');
+
+    if (!inviteEmail.trim()) { setInviteError('Email is required.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)) { setInviteError('Enter a valid email address.'); return; }
+
+    // Client-side role guard
+    if (inviteRole === 'super_admin' && !isSuperAdmin) {
+      setInviteError('Only Super Admins can invite another Super Admin.');
+      return;
+    }
+
+    // Check allowlist client-side for immediate feedback
+    if (inviteRole === 'super_admin' && isSuperAdmin) {
+      const onList = allowlist.some(a => a.email.toLowerCase() === inviteEmail.toLowerCase());
+      if (!onList) {
+        setInviteError('That email is not on the Super Admin allowlist. Add it to the allowlist first.');
+        return;
+      }
+    }
+
+    // Check for duplicate
+    const existing = admins.find(a => a.email.toLowerCase() === inviteEmail.toLowerCase());
+    if (existing) { setInviteError('An admin with that email already exists.'); return; }
+
+    setInviting(true);
+    try {
+      // Insert invitation token
+      const { data: inv, error: invErr } = await supabase
+        .from('admin_invitations')
+        .insert({
+          email: inviteEmail.toLowerCase().trim(),
+          role: inviteRole,
+          invited_by: adminUser.id,
+        })
+        .select()
+        .single();
+
+      if (invErr) throw invErr;
+
+      // Also create the admin_users record immediately (they can set password via invite link)
+      const { error: adminErr } = await supabase
+        .from('admin_users')
+        .insert({
+          email: inviteEmail.toLowerCase().trim(),
+          full_name: inviteFullName.trim() || null,
+          role: inviteRole,
+          invited_by: adminUser.id,
+        });
+
+      if (adminErr) throw adminErr;
+
+      // Log the action
+      await supabase.from('admin_activity_log').insert({
+        actor_email: adminUser.email,
+        action: `invited_${inviteRole}`,
+        target_email: inviteEmail.toLowerCase(),
+        metadata: { token_id: inv.id, role: inviteRole },
+      });
+
+      // Send invite email (using EmailJS)
+      const inviteLink = `${window.location.origin}/admin-setup?token=${inv.token}`;
+      await emailjs.send(
+        'service_nzpn1cn',
+        'template_adevhna',
+        {
+          to_email: inviteEmail,
+          to_name: inviteFullName || 'New Admin',
+          message: `You've been invited to the GreenSort Admin Portal as ${inviteRole === 'super_admin' ? 'Super Admin' : 'Admin'}. Accept your invitation here: ${inviteLink} (expires in 48 hours)`,
+        },
+        { publicKey: 'lkfpdujTp2Sx9Eq3u' }
+      );
+
+      setInviteSuccess(`Invitation sent to ${inviteEmail}!`);
+      setInviteEmail('');
+      setInviteFullName('');
+      setInviteRole('admin');
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      setInviteError(err.message || 'Failed to send invitation. Try again.');
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  // ── deactivate / reactivate ────────────────────────────────────────────────
+  const handleToggleActive = async (admin) => {
+    if (admin.id === adminUser?.id) {
+      alert("You cannot deactivate your own account.");
+      return;
+    }
+    if (admin.role === 'super_admin' && !isSuperAdmin) {
+      alert("Only a Super Admin can deactivate another Super Admin.");
+      return;
+    }
+    const action = admin.is_active ? 'deactivate' : 'reactivate';
+    if (!window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${admin.email}?`)) return;
+
+    await supabase.from('admin_users').update({ is_active: !admin.is_active }).eq('id', admin.id);
+    await supabase.from('admin_activity_log').insert({
+      actor_email: adminUser.email,
+      action: `${action}_admin`,
+      target_email: admin.email,
+    });
+    fetchData();
+  };
+
+  // ── role change (super_admin only) ─────────────────────────────────────────
+  const handleRoleChange = async (admin, newRole) => {
+    if (!isSuperAdmin) return;
+    if (newRole === 'super_admin') {
+      const onList = allowlist.some(a => a.email.toLowerCase() === admin.email.toLowerCase());
+      if (!onList) { alert('That email is not on the Super Admin allowlist.'); return; }
+    }
+    if (!window.confirm(`Change ${admin.email}'s role to ${newRole}?`)) return;
+    await supabase.from('admin_users').update({ role: newRole }).eq('id', admin.id);
+    await supabase.from('admin_activity_log').insert({
+      actor_email: adminUser.email, action: 'changed_role',
+      target_email: admin.email, metadata: { from: admin.role, to: newRole },
+    });
+    fetchData();
+  };
+
+  // ── allowlist management ───────────────────────────────────────────────────
+  const handleAddAllowlist = async (e) => {
+    e.preventDefault();
+    if (!newAllowEmail.trim()) return;
+    setAllowlistSaving(true);
+    try {
+      await supabase.from('super_admin_allowlist').insert({ email: newAllowEmail.toLowerCase().trim(), note: newAllowNote.trim() || null });
+      setNewAllowEmail('');
+      setNewAllowNote('');
+      fetchData();
+    } catch (err) { console.error(err); }
+    finally { setAllowlistSaving(false); }
+  };
+
+  const handleRemoveAllowlist = async (id, email) => {
+    if (!window.confirm(`Remove ${email} from the Super Admin allowlist?`)) return;
+    await supabase.from('super_admin_allowlist').delete().eq('id', id);
+    fetchData();
+  };
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  const timeAgo = (ds) => {
+    const s = Math.floor((Date.now() - new Date(ds)) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s/60)}m ago`;
+    if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+    return `${Math.floor(s/86400)}d ago`;
+  };
+
+  const superAdmins = admins.filter(a => a.role === 'super_admin');
+  const regularAdmins = admins.filter(a => a.role === 'admin');
+
+  const accent = isLightMode ? '#4A7D5C' : '#2CD87D';
+  const accentBg = isLightMode ? 'bg-[#E4EFE8]' : 'bg-[#2CD87D]/10';
+  const accentText = isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]';
+
+  const tabs = [
+    { key: 'roster', label: 'Admin Roster' },
+    { key: 'invitations', label: `Pending Invites ${invitations.length > 0 ? `(${invitations.length})` : ''}` },
+    ...(isSuperAdmin ? [{ key: 'allowlist', label: 'Super Admin Allowlist' }] : []),
+  ];
+
+  if (authLoading) {
+    return (
+      <div className={`flex h-screen w-full ${t.bg} items-center justify-center`}>
+        <div className={`text-sm font-bold tracking-widest animate-pulse ${accentText}`}>VERIFYING ACCESS...</div>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className={`flex h-screen w-full ${t.bg} items-center justify-center`}>
+        <div className="text-center">
+          <p className="text-red-400 font-bold text-lg mb-2">Access Denied</p>
+          <p className={`text-sm ${t.textMuted}`}>You do not have permission to view this page.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+      <Sidebar />
+
+      <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
+        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
+
+          {/* ── HEADER ── */}
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-4">
+            <div>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Admin Access Control</h2>
+              <p className={`${t.textMuted} mt-1 text-sm font-medium`}>
+                Manage who has access to the GreenSort Admin Portal
+                {' · '}
+                <span className={accentText}>
+                  You are logged in as <strong>{adminUser?.role === 'super_admin' ? 'Super Admin' : 'Admin'}</strong>
+                </span>
+              </p>
+            </div>
+            <button
+              onClick={() => { setShowInviteModal(true); setInviteError(''); setInviteSuccess(''); }}
+              className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all ${
+                isLightMode
+                  ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C] shadow-md'
+                  : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676] shadow-[0_0_20px_rgba(44,216,125,0.3)]'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Invite Admin
+            </button>
+          </div>
+
+          {/* ── STAT CARDS ── */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { label: 'Total Admins', value: admins.length, icon: 'team' },
+              { label: 'Super Admins', value: superAdmins.length, icon: 'star', amber: true },
+              { label: 'Admins', value: regularAdmins.length, icon: 'shield' },
+              { label: 'Pending Invites', value: invitations.length, icon: 'mail' },
+            ].map(card => (
+              <ThemedCard key={card.label} className={`flex flex-col justify-between h-[110px] ${card.amber ? (isLightMode ? '!border-amber-200/60 !bg-amber-50/50' : '!border-amber-500/20 !bg-amber-500/5') : ''}`}>
+                <p className={`text-[12px] font-semibold tracking-wide ${card.amber ? (isLightMode ? 'text-amber-600' : 'text-amber-400') : t.textMuted}`}>{card.label}</p>
+                <p className={`text-[36px] font-bold leading-none ${card.amber ? (isLightMode ? 'text-amber-600' : 'text-amber-400') : t.textMain}`}>{card.value}</p>
+              </ThemedCard>
+            ))}
+          </div>
+
+          {/* ── TABS ── */}
+          <div className={`flex items-center gap-1 mb-6 p-1.5 rounded-2xl border w-fit ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7]' : 'bg-[#131917] border-white/[0.05]'}`}>
+            {tabs.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 ${
+                  activeTab === tab.key
+                    ? (isLightMode ? 'bg-white text-[#4A7D5C] shadow-sm' : 'bg-[#18201B] text-[#2CD87D] border border-[#2CD87D]/20')
+                    : `${t.textMuted}`
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {dataLoading ? (
+            <div className={`flex justify-center items-center h-[200px] text-sm font-bold tracking-widest animate-pulse ${accentText}`}>LOADING...</div>
+          ) : (
+            <>
+              {/* ═══════════════════════════════════════════════════
+                  TAB 1: ADMIN ROSTER
+              ═══════════════════════════════════════════════════ */}
+              {activeTab === 'roster' && (
+                <div className="space-y-6">
+
+                  {/* SUPER ADMINS SECTION */}
+                  <ThemedCard className="!p-0 overflow-hidden">
+                    <div className={`px-6 py-4 border-b flex items-center gap-3 ${isLightMode ? 'border-[#F0F4F1] bg-amber-50/40' : 'border-white/[0.05] bg-amber-500/5'}`}>
+                      <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                      <h3 className={`text-sm font-black uppercase tracking-widest ${isLightMode ? 'text-amber-700' : 'text-amber-400'}`}>
+                        Super Admins — Full Access ({superAdmins.length})
+                      </h3>
+                    </div>
+                    {superAdmins.length === 0 ? (
+                      <p className={`p-8 text-center text-sm italic ${t.textMuted}`}>No super admins found.</p>
+                    ) : (
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
+                            <th className="px-6 py-3 font-bold">Admin</th>
+                            <th className="px-6 py-3 font-bold">Role</th>
+                            <th className="px-6 py-3 font-bold">Status</th>
+                            <th className="px-6 py-3 font-bold">Joined</th>
+                            {isSuperAdmin && <th className="px-6 py-3 font-bold text-right">Actions</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {superAdmins.map(admin => (
+                            <AdminRow
+                              key={admin.id}
+                              admin={admin}
+                              currentAdmin={adminUser}
+                              isSuperAdmin={isSuperAdmin}
+                              isLightMode={isLightMode}
+                              t={t}
+                              timeAgo={timeAgo}
+                              onToggleActive={handleToggleActive}
+                              onRoleChange={handleRoleChange}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </ThemedCard>
+
+                  {/* ADMINS SECTION */}
+                  <ThemedCard className="!p-0 overflow-hidden">
+                    <div className={`px-6 py-4 border-b flex items-center gap-3 ${isLightMode ? 'border-[#F0F4F1] bg-[#F9FBF9]' : 'border-white/[0.05] bg-[#0A0D10]'}`}>
+                      <svg className={`w-4 h-4 ${accentText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                      <h3 className={`text-sm font-black uppercase tracking-widest ${accentText}`}>
+                        Admins — Standard Access ({regularAdmins.length})
+                      </h3>
+                    </div>
+                    {regularAdmins.length === 0 ? (
+                      <p className={`p-8 text-center text-sm italic ${t.textMuted}`}>No admins yet. Invite your first admin above.</p>
+                    ) : (
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
+                            <th className="px-6 py-3 font-bold">Admin</th>
+                            <th className="px-6 py-3 font-bold">Role</th>
+                            <th className="px-6 py-3 font-bold">Status</th>
+                            <th className="px-6 py-3 font-bold">Joined</th>
+                            <th className="px-6 py-3 font-bold text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {regularAdmins.map(admin => (
+                            <AdminRow
+                              key={admin.id}
+                              admin={admin}
+                              currentAdmin={adminUser}
+                              isSuperAdmin={isSuperAdmin}
+                              isLightMode={isLightMode}
+                              t={t}
+                              timeAgo={timeAgo}
+                              onToggleActive={handleToggleActive}
+                              onRoleChange={handleRoleChange}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </ThemedCard>
+                </div>
+              )}
+
+              {/* ═══════════════════════════════════════════════════
+                  TAB 2: PENDING INVITATIONS
+              ═══════════════════════════════════════════════════ */}
+              {activeTab === 'invitations' && (
+                <ThemedCard className="!p-0 overflow-hidden">
+                  <div className={`px-6 py-4 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
+                    <h3 className={`text-sm font-black uppercase tracking-widest ${accentText}`}>Pending Invitations</h3>
+                  </div>
+                  {invitations.length === 0 ? (
+                    <p className={`p-10 text-center italic text-sm ${t.textMuted}`}>No pending invitations.</p>
+                  ) : (
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
+                          <th className="px-6 py-3 font-bold">Invited Email</th>
+                          <th className="px-6 py-3 font-bold">Role</th>
+                          <th className="px-6 py-3 font-bold">Invited By</th>
+                          <th className="px-6 py-3 font-bold">Expires</th>
+                          {isSuperAdmin && <th className="px-6 py-3 font-bold text-right">Action</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invitations.map(inv => (
+                          <tr key={inv.id} className={`border-b text-sm transition-colors ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'}`}>
+                            <td className={`px-6 py-4 font-semibold ${t.textMain}`}>{inv.email}</td>
+                            <td className="px-6 py-4"><RoleBadge role={inv.role} light={isLightMode} /></td>
+                            <td className={`px-6 py-4 text-xs ${t.textMuted}`}>{inv.admin_users?.email || '—'}</td>
+                            <td className={`px-6 py-4 text-xs ${t.textMuted}`}>
+                              {new Date(inv.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            {isSuperAdmin && (
+                              <td className="px-6 py-4 text-right">
+                                <button
+                                  onClick={async () => {
+                                    if (window.confirm(`Revoke invite for ${inv.email}?`)) {
+                                      await supabase.from('admin_invitations').delete().eq('id', inv.id);
+                                      await supabase.from('admin_users').delete().eq('email', inv.email).eq('is_active', false);
+                                      fetchData();
+                                    }
+                                  }}
+                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${isLightMode ? 'text-red-500 border-red-200 hover:bg-red-50' : 'text-red-400 border-red-500/20 hover:bg-red-500/10'}`}
+                                >
+                                  Revoke
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </ThemedCard>
+              )}
+
+              {/* ═══════════════════════════════════════════════════
+                  TAB 3: SUPER ADMIN ALLOWLIST (super_admin only)
+              ═══════════════════════════════════════════════════ */}
+              {activeTab === 'allowlist' && isSuperAdmin && (
+                <div className="space-y-5">
+                  <div className={`p-4 rounded-2xl border flex items-start gap-3 ${isLightMode ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/20'}`}>
+                    <svg className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    <p className={`text-sm font-medium ${isLightMode ? 'text-amber-700' : 'text-amber-300'}`}>
+                      Only emails on this allowlist can be assigned the <strong>Super Admin</strong> role. This is enforced at both the database (RLS) and frontend level. Add an email here <em>before</em> inviting them as Super Admin.
+                    </p>
+                  </div>
+
+                  {/* ADD TO ALLOWLIST FORM */}
+                  <ThemedCard>
+                    <h3 className={`text-sm font-black uppercase tracking-widest mb-5 ${accentText}`}>Add to Allowlist</h3>
+                    <form onSubmit={handleAddAllowlist} className="flex flex-col sm:flex-row gap-3">
+                      <input
+                        type="email"
+                        value={newAllowEmail}
+                        onChange={e => setNewAllowEmail(e.target.value)}
+                        placeholder="email@example.com"
+                        className={`flex-1 px-4 py-2.5 rounded-xl border text-sm outline-none transition-all ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23] focus:border-[#6C9A7D]' : 'bg-[#0A0D10] border-white/[0.05] text-white focus:border-[#2CD87D]/40'}`}
+                      />
+                      <input
+                        type="text"
+                        value={newAllowNote}
+                        onChange={e => setNewAllowNote(e.target.value)}
+                        placeholder="Note (e.g. Founder)"
+                        className={`w-48 px-4 py-2.5 rounded-xl border text-sm outline-none transition-all ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23]' : 'bg-[#0A0D10] border-white/[0.05] text-white'}`}
+                      />
+                      <button
+                        type="submit"
+                        disabled={allowlistSaving}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${isLightMode ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C]' : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676]'} disabled:opacity-60`}
+                      >
+                        {allowlistSaving ? 'Adding…' : 'Add Email'}
+                      </button>
+                    </form>
+                  </ThemedCard>
+
+                  {/* ALLOWLIST TABLE */}
+                  <ThemedCard className="!p-0 overflow-hidden">
+                    <div className={`px-6 py-4 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
+                      <h3 className={`text-sm font-black uppercase tracking-widest ${isLightMode ? 'text-amber-600' : 'text-amber-400'}`}>
+                        Approved Super Admin Emails ({allowlist.length})
+                      </h3>
+                    </div>
+                    {allowlist.length === 0 ? (
+                      <p className={`p-8 text-center italic text-sm ${t.textMuted}`}>No emails on allowlist yet.</p>
+                    ) : (
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
+                            <th className="px-6 py-3 font-bold">Email</th>
+                            <th className="px-6 py-3 font-bold">Note</th>
+                            <th className="px-6 py-3 font-bold">Added</th>
+                            <th className="px-6 py-3 font-bold text-right">Remove</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allowlist.map(item => (
+                            <tr key={item.id} className={`border-b text-sm ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'}`}>
+                              <td className={`px-6 py-4 font-semibold ${t.textMain}`}>{item.email}</td>
+                              <td className={`px-6 py-4 text-xs ${t.textMuted}`}>{item.note || '—'}</td>
+                              <td className={`px-6 py-4 text-xs ${t.textMuted}`}>{timeAgo(item.created_at)}</td>
+                              <td className="px-6 py-4 text-right">
+                                <button
+                                  onClick={() => handleRemoveAllowlist(item.id, item.email)}
+                                  className={`p-2 rounded-lg transition-all ${t.textMuted} hover:text-red-400 hover:bg-red-500/10`}
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </ThemedCard>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="h-16" />
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════
+          INVITE MODAL
+      ═══════════════════════════════════════════════════════════ */}
+      <Modal open={showInviteModal} onClose={() => setShowInviteModal(false)} light={isLightMode}>
+        <div className={`px-7 py-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.06]'}`}>
+          <h3 className={`text-xl font-bold ${t.textMain}`}>Invite Admin</h3>
+          <p className={`text-sm ${t.textMuted} mt-1`}>
+            {isSuperAdmin ? 'You can invite Super Admins and Admins.' : 'You can invite Admins only.'}
+          </p>
+        </div>
+
+        <form onSubmit={handleInvite} className="px-7 py-6 space-y-5">
+
+          {/* Email */}
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>Email Address *</label>
+            <input
+              type="email"
+              value={inviteEmail}
+              onChange={e => setInviteEmail(e.target.value)}
+              placeholder="admin@greensort.app"
+              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23] focus:border-[#6C9A7D]' : 'bg-[#0A0D10] border-white/[0.05] text-white focus:border-[#2CD87D]/40'}`}
+            />
+          </div>
+
+          {/* Full Name */}
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>Full Name (optional)</label>
+            <input
+              type="text"
+              value={inviteFullName}
+              onChange={e => setInviteFullName(e.target.value)}
+              placeholder="Juan dela Cruz"
+              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23]' : 'bg-[#0A0D10] border-white/[0.05] text-white'}`}
+            />
+          </div>
+
+          {/* Role selector */}
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>Role *</label>
+            <div className="flex gap-3">
+              {/* Admin option — always visible */}
+              <button
+                type="button"
+                onClick={() => setInviteRole('admin')}
+                className={`flex-1 flex items-center gap-3 p-4 rounded-2xl border-2 transition-all text-left ${
+                  inviteRole === 'admin'
+                    ? (isLightMode ? 'border-[#6C9A7D] bg-[#E4EFE8]' : 'border-[#2CD87D] bg-[#2CD87D]/10')
+                    : (isLightMode ? 'border-[#F0F4F1] hover:border-[#E5ECE7]' : 'border-white/[0.05] hover:border-white/10')
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${inviteRole === 'admin' ? (isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#2CD87D]') : (isLightMode ? 'bg-[#F0F4F1]' : 'bg-white/5')}`}>
+                  <svg className={`w-4 h-4 ${inviteRole === 'admin' ? (isLightMode ? 'text-white' : 'text-[#0A0D10]') : t.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                </div>
+                <div>
+                  <p className={`text-sm font-bold ${inviteRole === 'admin' ? (isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]') : t.textMain}`}>Admin</p>
+                  <p className={`text-[10px] ${t.textMuted}`}>Standard access</p>
+                </div>
+              </button>
+
+              {/* Super Admin option — only shown to super_admin */}
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setInviteRole('super_admin')}
+                  className={`flex-1 flex items-center gap-3 p-4 rounded-2xl border-2 transition-all text-left ${
+                    inviteRole === 'super_admin'
+                      ? (isLightMode ? 'border-amber-400 bg-amber-50' : 'border-amber-500 bg-amber-500/10')
+                      : (isLightMode ? 'border-[#F0F4F1] hover:border-amber-200' : 'border-white/[0.05] hover:border-amber-500/20')
+                  }`}
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${inviteRole === 'super_admin' ? 'bg-amber-500' : (isLightMode ? 'bg-[#F0F4F1]' : 'bg-white/5')}`}>
+                    <svg className={`w-4 h-4 ${inviteRole === 'super_admin' ? 'text-white' : 'text-amber-500'}`} fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                  </div>
+                  <div>
+                    <p className={`text-sm font-bold ${inviteRole === 'super_admin' ? 'text-amber-500' : t.textMain}`}>Super Admin</p>
+                    <p className={`text-[10px] ${t.textMuted}`}>Full control</p>
+                  </div>
+                </button>
+              )}
+            </div>
+
+            {/* Allowlist hint for super_admin role */}
+            {inviteRole === 'super_admin' && (
+              <p className={`mt-2 text-[11px] font-medium flex items-center gap-1.5 ${isLightMode ? 'text-amber-600' : 'text-amber-400'}`}>
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                Email must be on the Super Admin allowlist.
+              </p>
+            )}
+          </div>
+
+          {/* Error / Success messages */}
+          {inviteError && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <svg className="w-4 h-4 text-red-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <p className="text-red-400 text-sm font-medium">{inviteError}</p>
+            </div>
+          )}
+          {inviteSuccess && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+              <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+              <p className="text-green-400 text-sm font-bold">{inviteSuccess}</p>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowInviteModal(false)}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm border transition-all ${isLightMode ? 'border-[#E5ECE7] text-[#6B7A74] hover:bg-[#F0F4F1]' : 'border-white/[0.07] text-[#8A9B96] hover:bg-white/[0.03]'}`}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={inviting}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-60 ${
+                inviteRole === 'super_admin'
+                  ? 'bg-amber-500 hover:bg-amber-400 text-white'
+                  : (isLightMode ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C]' : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676]')
+              }`}
+            >
+              {inviting ? 'Sending Invite…' : 'Send Invitation'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}} />
+    </div>
+  );
+}
+
+// ── Table row sub-component ───────────────────────────────────────────────────
+function AdminRow({ admin, currentAdmin, isSuperAdmin, isLightMode, t, timeAgo, onToggleActive, onRoleChange }) {
+  const isSelf = admin.id === currentAdmin?.id;
+  return (
+    <tr className={`border-b text-sm transition-colors ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'}`}>
+      <td className="px-6 py-4">
+        <div className="flex items-center gap-3">
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-black ${
+            admin.role === 'super_admin'
+              ? (isLightMode ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/15 text-amber-400')
+              : (isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C]' : 'bg-[#2CD87D]/10 text-[#2CD87D]')
+          }`}>
+            {(admin.full_name || admin.email).substring(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <p className={`font-bold ${t.textMain} flex items-center gap-1.5`}>
+              {admin.full_name || '—'}
+              {isSelf && <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C]' : 'bg-[#2CD87D]/10 text-[#2CD87D]'}`}>YOU</span>}
+            </p>
+            <p className={`text-xs ${t.textMuted}`}>{admin.email}</p>
+          </div>
+        </div>
+      </td>
+      <td className="px-6 py-4">
+        <RoleBadge role={admin.role} light={isLightMode} />
+      </td>
+      <td className="px-6 py-4">
+        <StatusDot active={admin.is_active} light={isLightMode} />
+      </td>
+      <td className={`px-6 py-4 text-xs ${t.textMuted}`}>
+        {timeAgo(admin.created_at)}
+      </td>
+      <td className="px-6 py-4 text-right">
+        <div className="flex items-center justify-end gap-2">
+          {/* Role toggle (super_admin only, cannot change own role) */}
+          {isSuperAdmin && !isSelf && (
+            <button
+              onClick={() => onRoleChange(admin, admin.role === 'super_admin' ? 'admin' : 'super_admin')}
+              className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                admin.role === 'super_admin'
+                  ? (isLightMode ? 'text-amber-600 border-amber-200 hover:bg-amber-50' : 'text-amber-400 border-amber-500/20 hover:bg-amber-500/10')
+                  : (isLightMode ? 'text-[#4A7D5C] border-[#98BAA3]/30 hover:bg-[#E4EFE8]' : 'text-[#2CD87D] border-[#2CD87D]/20 hover:bg-[#2CD87D]/10')
+              }`}
+            >
+              {admin.role === 'super_admin' ? '↓ Demote' : '↑ Promote'}
+            </button>
+          )}
+          {/* Deactivate / Reactivate */}
+          {!isSelf && (isSuperAdmin || admin.role === 'admin') && (
+            <button
+              onClick={() => onToggleActive(admin)}
+              className={`p-2 rounded-lg transition-all ${t.textMuted} ${admin.is_active ? 'hover:text-orange-400 hover:bg-orange-500/10' : 'hover:text-[#2CD87D] hover:bg-[#2CD87D]/10'}`}
+              title={admin.is_active ? 'Deactivate' : 'Reactivate'}
+            >
+              {admin.is_active ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" /></svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+              )}
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+</file>
+
+<file path="src/GuidePanel.jsx">
+import React, { useState } from 'react';
+import { useTheme } from './ThemeContext';
+
+// Page-specific guide content
+const GUIDES = {
+  dashboard: {
+    title: 'Dashboard Guide',
+    sections: [
+      {
+        heading: 'Overview Cards',
+        body: 'The three stat cards at the top show real-time counts from your database — Total Users, Active Drop-Off Centers, and the most scanned material type. These refresh each time you load the page.',
+      },
+      {
+        heading: 'Collection Chart',
+        body: 'Hover over the line chart to see daily waste collection totals in kg. Data is pulled from surrender logs. If no logs exist yet, sample data is shown as a placeholder.',
+      },
+      {
+        heading: 'Material Breakdown',
+        body: 'The donut chart shows the proportion of material types collected. This week\'s data is reflected — Plastic, Glass, and Paper are the primary categories tracked.',
+      },
+      {
+        heading: 'Last Activity',
+        body: 'Displays the two most recent system events such as database syncs and pending application notices. This is a summary view — detailed activity lives in each section.',
+      },
+    ],
+  },
+  users: {
+    title: 'User Management Guide',
+    sections: [
+      {
+        heading: 'User Registry',
+        body: 'This table lists all registered app users from the profiles database. Each row shows the user\'s name, email, role, online status, and their join date.',
+      },
+      {
+        heading: 'Online Status',
+        body: 'A green dot means the user is currently active in the app (detected via presence tracking). A grey dot means they are offline or have closed the app.',
+      },
+      {
+        heading: 'Deleting a User',
+        body: 'Click the trash icon to permanently delete a user\'s profile record. This action cannot be undone. Use this only for spam accounts or at a user\'s explicit request.',
+      },
+      {
+        heading: 'Refreshing Data',
+        body: 'Click "Refresh Data" at the top right of the table to re-fetch the latest user list from the server. New sign-ups will appear after a refresh.',
+      },
+    ],
+  },
+  moderation: {
+    title: 'Content Moderation Guide',
+    sections: [
+      {
+        heading: 'All Posts',
+        body: 'Browse every post in the community feed. You can delete any post directly using the trash icon at the bottom of the post card. Deletions are permanent.',
+      },
+      {
+        heading: 'Reported Posts',
+        body: 'Posts flagged by users appear here. Review the report reason, inspect the content, then choose to Approve (delete the post and notify the reporter) or Decline (keep the post, dismiss report).',
+      },
+      {
+        heading: 'Reported Comments',
+        body: 'View comments that have been reported. Inspect the quoted comment text, then delete it or dismiss the report. The comment author is not notified of the report.',
+      },
+      {
+        heading: 'Reported Users',
+        body: 'Accounts flagged by other users appear here. You can ban or warn the user, or dismiss the report if it appears unfounded. Ban logic should be implemented per your app\'s policy.',
+      },
+    ],
+  },
+  dropoff: {
+    title: 'Drop-Off Nodes Guide',
+    sections: [
+      {
+        heading: 'Requests Tab',
+        body: 'Businesses and barangay organizations apply to become GreenSort drop-off centers. Each application shows their name, contact number, location, and how long they plan to operate.',
+      },
+      {
+        heading: 'Approving an Application',
+        body: 'Click the checkmark icon to approve. An automated email will be sent to the applicant\'s address using EmailJS. Make sure the applicant\'s email is valid before approving.',
+      },
+      {
+        heading: 'Rejecting an Application',
+        body: 'Click the X icon. You\'ll be prompted to enter a rejection reason, which is included in the notification email sent to the applicant.',
+      },
+      {
+        heading: 'Active Nodes Tab',
+        body: 'Lists all currently approved drop-off centers. You can deactivate a node (puts it on hold) or permanently delete it. Deactivated nodes can be reactivated later.',
+      },
+      {
+        heading: 'Document Review',
+        body: 'Applicants may attach a permit or business document URL. Click "View File" to open it in a new tab before making your decision.',
+      },
+    ],
+  },
+  upcycle: {
+    title: 'Upcycle Management Guide',
+    sections: [
+      {
+        heading: 'Suggestions Tab',
+        body: 'AI-generated upcycling project ideas are submitted here for review. Each suggestion shows the project name, material category, and difficulty level before publishing.',
+      },
+      {
+        heading: 'Published Tab',
+        body: 'Projects you\'ve approved and made live appear in this tab. These are visible to all app users in the Upcycle section of GreenSort.',
+      },
+      {
+        heading: 'Reviewing a Project',
+        body: 'Read through the AI-generated tutorial carefully. Check that instructions are safe, practical, and appropriate for the listed difficulty level before publishing.',
+      },
+    ],
+  },
+  access: {
+    title: 'Admin Access Guide',
+    sections: [
+      {
+        heading: 'Role Levels',
+        body: 'There are two roles: Super Admin (full control — can manage all admins, view the allowlist, change roles) and Admin (standard access — can moderate content and manage users, but cannot promote to Super Admin).',
+      },
+      {
+        heading: 'Inviting an Admin',
+        body: 'Click "Invite Admin" and enter the person\'s email and name. Choose their role. An invitation email is sent via EmailJS. The invitee must use the link in the email to set up their account.',
+      },
+      {
+        heading: 'Super Admin Allowlist',
+        body: 'Only Super Admins can see this tab. Before you can invite or promote someone to Super Admin, their email must be added to this allowlist. This is enforced at the database level too.',
+      },
+      {
+        heading: 'Deactivating an Admin',
+        body: 'Click the power icon next to an admin\'s row to deactivate their account. They will not be able to log in until reactivated. You cannot deactivate your own account.',
+      },
+      {
+        heading: 'Pending Invites',
+        body: 'View all sent invitations that haven\'t been accepted yet. Invites expire after 48 hours. Super Admins can revoke an invite early if needed.',
+      },
+    ],
+  },
+};
+
+export default function GuidePanel({ page }) {
+  const { isLightMode, t } = useTheme();
+  const [open, setOpen] = useState(false);
+  const [expandedIndex, setExpandedIndex] = useState(null);
+
+  const guide = GUIDES[page];
+  if (!guide) return null;
+
+  return (
+    <>
+      {/* Floating trigger */}
+      <button
+        onClick={() => setOpen(true)}
+        className={`fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-medium shadow-lg transition-all duration-200 ${
+          isLightMode
+            ? 'bg-white border border-[#E6EBE4] text-[#3D7A58] hover:border-[#3D7A58]/40 hover:bg-[#F6F8F5]'
+            : 'bg-[#1E2822] border border-white/[0.07] text-[#7DBF96] hover:border-[#5E9E7A]/30'
+        }`}
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        How to use this page
+      </button>
+
+      {/* Panel overlay */}
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-end sm:justify-end"
+          onClick={() => setOpen(false)}
+        >
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" />
+
+          {/* Panel */}
+          <div
+            className={`relative w-full sm:w-[400px] h-[85vh] sm:h-full sm:max-h-screen overflow-y-auto rounded-t-3xl sm:rounded-none border-t sm:border-l transition-colors ${
+              isLightMode ? 'bg-white border-[#E6EBE4]' : 'bg-[#141A16] border-white/[0.06]'
+            }`}
+            onClick={e => e.stopPropagation()}
+            style={{ scrollbarWidth: 'none' }}
+          >
+            {/* Header */}
+            <div className={`sticky top-0 z-10 px-6 py-5 border-b ${t.divider} ${isLightMode ? 'bg-white' : 'bg-[#141A16]'}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${t.accentBg}`}>
+                    <svg className={`w-4 h-4 ${t.accentText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className={`text-sm font-semibold ${t.textMain}`}>{guide.title}</h2>
+                    <p className={`text-[10px] ${t.textMuted} mt-0.5`}>{guide.sections.length} topics</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setOpen(false)}
+                  className={`p-2 rounded-xl transition-all ${t.textMuted} hover:${t.textMain} ${isLightMode ? 'hover:bg-[#F3F6F1]' : 'hover:bg-white/[0.04]'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-5 space-y-2">
+              {guide.sections.map((section, i) => (
+                <div
+                  key={i}
+                  className={`rounded-xl border overflow-hidden transition-all ${
+                    isLightMode ? 'border-[#E6EBE4]' : 'border-white/[0.05]'
+                  }`}
+                >
+                  <button
+                    onClick={() => setExpandedIndex(expandedIndex === i ? null : i)}
+                    className={`w-full flex items-center justify-between px-4 py-3.5 text-left transition-all ${
+                      expandedIndex === i
+                        ? (isLightMode ? 'bg-[#EAF4EE]' : 'bg-[#5E9E7A]/08')
+                        : (isLightMode ? 'bg-white hover:bg-[#F6F8F5]' : 'bg-[#191F1C] hover:bg-white/[0.025]')
+                    }`}
+                  >
+                    <span className={`text-sm font-medium ${expandedIndex === i ? t.accentText : t.textMain}`}>
+                      {section.heading}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${t.textMuted} ${expandedIndex === i ? 'rotate-180' : ''}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {expandedIndex === i && (
+                    <div className={`px-4 py-4 border-t ${t.divider} ${isLightMode ? 'bg-[#FAFCF9]' : 'bg-[#141A16]'}`}>
+                      <p className={`text-sm leading-relaxed ${t.textSub}`}>{section.body}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Footer note */}
+              <div className={`mt-4 p-4 rounded-xl ${isLightMode ? 'bg-[#F3F6F1]' : 'bg-white/[0.02]'}`}>
+                <p className={`text-xs leading-relaxed ${t.textMuted}`}>
+                  Need more help? Contact your Super Admin or refer to the GreenSort internal documentation.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+</file>
+
+<file path="src/useAdminAuth.js">
+// useAdminAuth.js
+// ─────────────────────────────────────────────────────────────────────────────
+// Central hook that every page imports to know:
+//   • who is logged in
+//   • what their admin role is
+//   • whether they are allowed to perform privileged actions
+//
+// Usage:
+//   const { adminUser, role, isSuperAdmin, isAdmin, loading } = useAdminAuth();
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from './supabase';
+
+export function useAdminAuth() {
+  const [adminUser, setAdminUser]   = useState(null);  // row from admin_users
+  const [role, setRole]             = useState(null);   // 'super_admin' | 'admin' | null
+  const [loading, setLoading]       = useState(true);
+  const [authError, setAuthError]   = useState(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setAuthError(null);
+    try {
+      // 1. Get the currently logged-in Supabase auth user
+      const { data: { user }, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !user) {
+        setAdminUser(null);
+        setRole(null);
+        return;
+      }
+
+      // 2. Look them up in admin_users
+      const { data: adminRow, error: dbErr } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('email', user.email)
+        .eq('is_active', true)
+        .single();
+
+      if (dbErr || !adminRow) {
+        // Authenticated with Supabase Auth but NOT in admin_users → no portal access
+        setAdminUser(null);
+        setRole(null);
+        setAuthError('Your account does not have admin portal access.');
+        return;
+      }
+
+      setAdminUser(adminRow);
+      setRole(adminRow.role);
+    } catch (err) {
+      console.error('useAdminAuth error:', err);
+      setAuthError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+
+    // Re-check whenever the Supabase auth session changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      refresh();
+    });
+    return () => subscription.unsubscribe();
+  }, [refresh]);
+
+  return {
+    adminUser,
+    role,
+    isSuperAdmin : role === 'super_admin',
+    isAdmin      : role === 'admin' || role === 'super_admin', // super_admin inherits admin rights
+    loading,
+    authError,
+    refresh,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standalone helper — call once on app boot to guard the portal entry point.
+// Returns { allowed: bool, role: string|null }
+// ─────────────────────────────────────────────────────────────────────────────
+export async function checkAdminAccess() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { allowed: false, role: null };
+
+  const { data } = await supabase
+    .from('admin_users')
+    .select('role')
+    .eq('email', user.email)
+    .eq('is_active', true)
+    .single();
+
+  if (!data) return { allowed: false, role: null };
+  return { allowed: true, role: data.role };
+}
+</file>
+
+<file path="public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="src/assets/react.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="35.93" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 228"><path fill="#00D8FF" d="M210.483 73.824a171.49 171.49 0 0 0-8.24-2.597c.465-1.9.893-3.777 1.273-5.621c6.238-30.281 2.16-54.676-11.769-62.708c-13.355-7.7-35.196.329-57.254 19.526a171.23 171.23 0 0 0-6.375 5.848a155.866 155.866 0 0 0-4.241-3.917C100.759 3.829 77.587-4.822 63.673 3.233C50.33 10.957 46.379 33.89 51.995 62.588a170.974 170.974 0 0 0 1.892 8.48c-3.28.932-6.445 1.924-9.474 2.98C17.309 83.498 0 98.307 0 113.668c0 15.865 18.582 31.778 46.812 41.427a145.52 145.52 0 0 0 6.921 2.165a167.467 167.467 0 0 0-2.01 9.138c-5.354 28.2-1.173 50.591 12.134 58.266c13.744 7.926 36.812-.22 59.273-19.855a145.567 145.567 0 0 0 5.342-4.923a168.064 168.064 0 0 0 6.92 6.314c21.758 18.722 43.246 26.282 56.54 18.586c13.731-7.949 18.194-32.003 12.4-61.268a145.016 145.016 0 0 0-1.535-6.842c1.62-.48 3.21-.974 4.76-1.488c29.348-9.723 48.443-25.443 48.443-41.52c0-15.417-17.868-30.326-45.517-39.844Zm-6.365 70.984c-1.4.463-2.836.91-4.3 1.345c-3.24-10.257-7.612-21.163-12.963-32.432c5.106-11 9.31-21.767 12.459-31.957c2.619.758 5.16 1.557 7.61 2.4c23.69 8.156 38.14 20.213 38.14 29.504c0 9.896-15.606 22.743-40.946 31.14Zm-10.514 20.834c2.562 12.94 2.927 24.64 1.23 33.787c-1.524 8.219-4.59 13.698-8.382 15.893c-8.067 4.67-25.32-1.4-43.927-17.412a156.726 156.726 0 0 1-6.437-5.87c7.214-7.889 14.423-17.06 21.459-27.246c12.376-1.098 24.068-2.894 34.671-5.345a134.17 134.17 0 0 1 1.386 6.193ZM87.276 214.515c-7.882 2.783-14.16 2.863-17.955.675c-8.075-4.657-11.432-22.636-6.853-46.752a156.923 156.923 0 0 1 1.869-8.499c10.486 2.32 22.093 3.988 34.498 4.994c7.084 9.967 14.501 19.128 21.976 27.15a134.668 134.668 0 0 1-4.877 4.492c-9.933 8.682-19.886 14.842-28.658 17.94ZM50.35 144.747c-12.483-4.267-22.792-9.812-29.858-15.863c-6.35-5.437-9.555-10.836-9.555-15.216c0-9.322 13.897-21.212 37.076-29.293c2.813-.98 5.757-1.905 8.812-2.773c3.204 10.42 7.406 21.315 12.477 32.332c-5.137 11.18-9.399 22.249-12.634 32.792a134.718 134.718 0 0 1-6.318-1.979Zm12.378-84.26c-4.811-24.587-1.616-43.134 6.425-47.789c8.564-4.958 27.502 2.111 47.463 19.835a144.318 144.318 0 0 1 3.841 3.545c-7.438 7.987-14.787 17.08-21.808 26.988c-12.04 1.116-23.565 2.908-34.161 5.309a160.342 160.342 0 0 1-1.76-7.887Zm110.427 27.268a347.8 347.8 0 0 0-7.785-12.803c8.168 1.033 15.994 2.404 23.343 4.08c-2.206 7.072-4.956 14.465-8.193 22.045a381.151 381.151 0 0 0-7.365-13.322Zm-45.032-43.861c5.044 5.465 10.096 11.566 15.065 18.186a322.04 322.04 0 0 0-30.257-.006c4.974-6.559 10.069-12.652 15.192-18.18ZM82.802 87.83a323.167 323.167 0 0 0-7.227 13.238c-3.184-7.553-5.909-14.98-8.134-22.152c7.304-1.634 15.093-2.97 23.209-3.984a321.524 321.524 0 0 0-7.848 12.897Zm8.081 65.352c-8.385-.936-16.291-2.203-23.593-3.793c2.26-7.3 5.045-14.885 8.298-22.6a321.187 321.187 0 0 0 7.257 13.246c2.594 4.48 5.28 8.868 8.038 13.147Zm37.542 31.03c-5.184-5.592-10.354-11.779-15.403-18.433c4.902.192 9.899.29 14.978.29c5.218 0 10.376-.117 15.453-.343c-4.985 6.774-10.018 12.97-15.028 18.486Zm52.198-57.817c3.422 7.8 6.306 15.345 8.596 22.52c-7.422 1.694-15.436 3.058-23.88 4.071a382.417 382.417 0 0 0 7.859-13.026a347.403 347.403 0 0 0 7.425-13.565Zm-16.898 8.101a358.557 358.557 0 0 1-12.281 19.815a329.4 329.4 0 0 1-23.444.823c-7.967 0-15.716-.248-23.178-.732a310.202 310.202 0 0 1-12.513-19.846h.001a307.41 307.41 0 0 1-10.923-20.627a310.278 310.278 0 0 1 10.89-20.637l-.001.001a307.318 307.318 0 0 1 12.413-19.761c7.613-.576 15.42-.876 23.31-.876H128c7.926 0 15.743.303 23.354.883a329.357 329.357 0 0 1 12.335 19.695a358.489 358.489 0 0 1 11.036 20.54a329.472 329.472 0 0 1-11 20.722Zm22.56-122.124c8.572 4.944 11.906 24.881 6.52 51.026c-.344 1.668-.73 3.367-1.15 5.09c-10.622-2.452-22.155-4.275-34.23-5.408c-7.034-10.017-14.323-19.124-21.64-27.008a160.789 160.789 0 0 1 5.888-5.4c18.9-16.447 36.564-22.941 44.612-18.3ZM128 90.808c12.625 0 22.86 10.235 22.86 22.86s-10.235 22.86-22.86 22.86s-22.86-10.235-22.86-22.86s10.235-22.86 22.86-22.86Z"></path></svg>
+</file>
+
+<file path="src/AdminLogin.jsx">
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const AdminLogin = () => {
+  const navigate = useNavigate();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [capsLockOn, setCapsLockOn] = useState(false);
+
+  // 🟢 FUNCTION PARA MA-DETECT KUNG NAKA-CAPSLOCK
+  const handleKeyUp = (e) => {
+    if (e.getModifierState('CapsLock')) {
+      setCapsLockOn(true);
+    } else {
+      setCapsLockOn(false);
+    }
+  };
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setError('');
+    
+    // Basic validation
+    if (!username || !password) {
+      setError('Please enter both username and password.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    // Simulate API call (Dito papasok ang Supabase sa susunod)
+    setTimeout(() => {
+      setIsLoading(false);
+      
+      // 🟢 PANSAMANTALANG CREDENTIALS (admin / admin123)
+      if (username === 'admin' && password === 'admin123') {
+        navigate('/dashboard'); // 👈 Lilipat sa Dashboard pag tama
+      } else {
+        setError('Invalid admin credentials. Access Denied.');
+      }
+    }, 1500);
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#020C14] px-4 font-sans relative overflow-hidden">
+      
+      {/* Background Glowing Orbs */}
+      <div className="absolute top-[-10%] left-[-10%] w-[400px] h-[400px] bg-[#00C853]/10 rounded-full blur-[120px] pointer-events-none"></div>
+      <div className="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none"></div>
+
+      {/* The Card with the Glowing Green Shadow */}
+      <div 
+        className="w-full max-w-md bg-[#05131E]/90 backdrop-blur-xl rounded-2xl p-8 sm:p-10 relative z-10"
+        style={{
+          boxShadow: '0 0 40px rgba(0, 200, 83, 0.15), inset 0 0 10px rgba(0, 200, 83, 0.05)',
+          border: '1px solid rgba(0, 200, 83, 0.1)'
+        }}
+      >
+        {/* LOGO SECTION */}
+        <div className="flex flex-col items-center justify-center mb-10">
+          <div className="w-16 h-16 mb-3 drop-shadow-[0_0_15px_rgba(0,200,83,0.5)]">
+            <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M50 15 C 65 15, 80 30, 80 50 C 80 50, 65 40, 50 40 C 35 40, 20 50, 20 50 C 20 30, 35 15, 50 15 Z" fill="#00C853" opacity="0.9"/>
+              <path d="M80 50 C 80 70, 65 85, 50 85 C 50 85, 55 70, 45 60 C 35 50, 20 50, 20 50 C 35 65, 55 75, 80 50 Z" fill="#00E676" opacity="0.9"/>
+              <path d="M20 50 C 20 70, 35 85, 50 85 C 50 85, 45 70, 55 60 C 65 50, 80 50, 80 50 C 65 65, 45 75, 20 50 Z" fill="#69F0AE" opacity="0.9"/>
+            </svg>
+          </div>
+          <h1 className="text-3xl font-black tracking-widest text-white">
+            <span className="text-gray-400">GREEN</span>
+            <span className="text-[#00C853]">SORT</span>
+          </h1>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_#ef4444]"></span>
+            <p className="text-[10px] text-gray-400 tracking-[0.3em] uppercase">Admin Portal</p>
+          </div>
+        </div>
+
+        {/* ERROR MESSAGE */}
+        {error && (
+          <div className="mb-6 p-3 bg-red-900/30 border border-red-500/50 rounded-lg text-red-400 text-sm text-center font-semibold flex items-center justify-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            {error}
+          </div>
+        )}
+
+        {/* LOGIN FORM */}
+        <form onSubmit={handleLogin} className="space-y-6">
+          
+          {/* USERNAME INPUT */}
+          <div>
+            <label className="block text-[#00C853] text-xs font-bold uppercase tracking-widest mb-2 ml-1" htmlFor="username">
+              Username
+            </label>
+            <input
+              id="username"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full bg-[#030A10] text-gray-200 px-4 py-3 rounded-xl border border-white/5 focus:border-[#00C853]/50 focus:outline-none focus:ring-1 focus:ring-[#00C853]/50 transition-all shadow-inner"
+              placeholder="Enter admin username"
+              autoComplete="username"
+            />
+          </div>
+
+          {/* PASSWORD INPUT */}
+          <div>
+            <label className="block text-[#00C853] text-xs font-bold uppercase tracking-widest mb-2 ml-1" htmlFor="password">
+              Password
+            </label>
+            <div className="relative">
+              <input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyUp={handleKeyUp}
+                className="w-full bg-[#030A10] text-gray-200 px-4 py-3 rounded-xl border border-white/5 focus:border-[#00C853]/50 focus:outline-none focus:ring-1 focus:ring-[#00C853]/50 transition-all pr-12 shadow-inner"
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+              {/* EYE ICON */}
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute inset-y-0 right-0 flex items-center pr-4 text-gray-500 hover:text-[#00C853] transition-colors"
+              >
+                {showPassword ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+                )}
+              </button>
+            </div>
+            {/* 🔴 CAPS LOCK WARNING */}
+            {capsLockOn && (
+              <p className="text-yellow-500 text-xs mt-2 flex items-center gap-1">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                Warning: Caps Lock is ON
+              </p>
+            )}
+          </div>
+
+          {/* ADDITIONAL OPTIONS */}
+          <div className="flex items-center justify-between text-sm mt-2">
+            <label className="flex items-center text-gray-400 cursor-pointer hover:text-gray-200 transition-colors">
+              <input type="checkbox" className="mr-2 accent-[#00C853] bg-[#030A10] border-gray-600 rounded w-4 h-4" />
+              Remember me
+            </label>
+            <a href="#" className="text-gray-500 hover:text-[#00C853] hover:underline transition-all text-xs">
+              Forgot Password?
+            </a>
+          </div>
+
+          {/* SUBMIT BUTTON */}
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-[#00C853] hover:bg-[#00E676] text-[#020C14] font-black tracking-widest py-4 px-4 rounded-xl transition-all duration-200 mt-6 flex justify-center items-center shadow-[0_0_15px_rgba(0,200,83,0.3)] hover:shadow-[0_0_25px_rgba(0,200,83,0.5)] transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed uppercase"
+          >
+            {isLoading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-[#020C14]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Authenticating...
+              </>
+            ) : (
+              'Login'
+            )}
+          </button>
+        </form>
+        
+        {/* 🟢 SECURITY NOTICE FOOTER */}
+        <div className="mt-8 pt-6 border-t border-white/5 text-center">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">Restricted Area • Authorized Personnel Only</p>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+export default AdminLogin;
+</file>
+
+<file path="src/App.css">
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+</file>
+
+<file path="src/index.css">
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+</file>
+
+<file path="src/main.jsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path="src/PresenceTracker.jsx">
+import React, { useEffect } from 'react';
+import { supabase } from './supabase';
+
+export default function PresenceTracker() {
+  useEffect(() => {
+    let channel;
+
+    const startTracking = async () => {
+      // 1. Kunin kung sino yung naka-login
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return; // Kung walang naka-login, wag mag-track
+
+      // 2. Pumasok sa invisible room na 'app-presence'
+      channel = supabase.channel('app-presence', {
+        config: { presence: { key: user.id } }, // Gamitin ang ID niya
+      });
+
+      channel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          // 3. I-broadcast sa buong system na ONLINE siya
+          await channel.track({ user_id: user.id, status: 'Online' });
+        }
+      });
+    };
+
+    startTracking();
+
+    // 4. Kapag ni-close ang tab o app, aalisin siya kusa ng system sa room!
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, []);
+
+  return null; // Wala itong UI, tahimik lang tumatakbo sa background
+}
+</file>
+
+<file path="src/ThemeContext.jsx">
+import React, { createContext, useContext, useState, useEffect } from 'react';
+
+const ThemeContext = createContext();
+
+export const ThemeProvider = ({ children }) => {
+  const [isLightMode, setIsLightMode] = useState(() => {
+    return localStorage.getItem('theme') !== 'dark';
+  });
+
+  const toggleTheme = () => setIsLightMode(prev => !prev);
+
+  useEffect(() => {
+    localStorage.setItem('theme', isLightMode ? 'light' : 'dark');
+  }, [isLightMode]);
+
+  // ─── Elegant Green Palette ────────────────────────────────────────────────
+  // Light: warm ivory/linen base, deep forest green accents
+  // Dark:  deep slate base (#0F1512 — near-black with green undertone), sage accents
+  const t = isLightMode ? {
+    // Backgrounds
+    bg:         'bg-[#F4F6F2]',         // warm off-white, slight sage tint
+    innerBg:    'bg-[#FAFBF9]',
+    // Cards
+    cardBg:     'bg-white border-[#E3E8E1] shadow-[0_1px_4px_rgba(0,0,0,0.04)]',
+    cardBorder: 'border-[#E3E8E1]',
+    // Text
+    textMain:   'text-[#1A2418]',       // deep forest
+    textSub:    'text-[#3D4E3A]',       // dark sage
+    textMuted:  'text-[#7A8C77]',       // muted sage
+    // Accents
+    accentText: 'text-[#2D6A4F]',       // deep emerald
+    accentBg:   'bg-[#D8EDDF]',
+    accentBorder:'border-[#A8CFBA]',
+    accentHex:  '#2D6A4F',
+    accentLight: '#D8EDDF',
+    // Row / dividers
+    rowHover:   'hover:bg-[#F7F9F6]',
+    divider:    'border-[#EDF0EB]',
+    // Chip
+    chipBg:     'bg-[#EEF4EC] text-[#2D6A4F]',
+    // Icon bg families
+    iconBg1:    'bg-[#D8EDDF] text-[#2D6A4F]',
+    iconBg2:    'bg-[#DDE9F5] text-[#2A5FA8]',
+    iconBg3:    'bg-[#FAECE8] text-[#A0442A]',
+    // Chart / donut
+    donutGradient: 'conic-gradient(#2D6A4F 0% 50%, #74C69D 50% 72%, #B7DFCA 72% 87%, #D8EDDF 87% 100%)',
+    donutInner: 'bg-white',
+    tooltipBg:  'bg-white border-[#E3E8E1] shadow-[0_8px_24px_rgba(0,0,0,0.08)]',
+    // Table head
+    tableHead:  'bg-[#F7F9F6] border-[#EDF0EB]',
+    // Input
+    inputBg:    'bg-[#F4F6F2] border-[#DDE3DA] text-[#1A2418] focus:border-[#2D6A4F]/50',
+    // Sidebar
+    sidebarBg:  'bg-white border-[#E3E8E1]',
+    navActive:  'bg-[#D8EDDF] text-[#2D6A4F]',
+    navInactive:'text-[#7A8C77] hover:bg-[#F0F4EE] hover:text-[#1A2418]',
+  } : {
+    // Backgrounds
+    bg:         'bg-[#0F1512]',         // near-black, deep forest undertone
+    innerBg:    'bg-[#0F1512]',
+    // Cards
+    cardBg:     'bg-[#161D19] border-white/[0.05] shadow-[0_1px_8px_rgba(0,0,0,0.3)]',
+    cardBorder: 'border-white/[0.05]',
+    // Text
+    textMain:   'text-[#E8F0E5]',       // warm near-white
+    textSub:    'text-[#B0C5AA]',       // light sage
+    textMuted:  'text-[#627A5C]',       // muted forest
+    // Accents
+    accentText: 'text-[#52B788]',       // mid-tone sage emerald
+    accentBg:   'bg-[#52B788]/10',
+    accentBorder:'border-[#52B788]/25',
+    accentHex:  '#52B788',
+    accentLight: 'rgba(82,183,136,0.12)',
+    // Row / dividers
+    rowHover:   'hover:bg-white/[0.025]',
+    divider:    'border-white/[0.05]',
+    // Chip
+    chipBg:     'bg-[#52B788]/10 text-[#52B788]',
+    // Icon bg families
+    iconBg1:    'bg-[#52B788]/12 text-[#52B788]',
+    iconBg2:    'bg-[#4A9ECC]/12 text-[#4A9ECC]',
+    iconBg3:    'bg-[#E87A5D]/12 text-[#E87A5D]',
+    // Chart / donut
+    donutGradient: 'conic-gradient(#52B788 0% 50%, #2D6A4F 50% 72%, #1B4332 72% 87%, #0F1512 87% 100%)',
+    donutInner: 'bg-[#161D19]',
+    tooltipBg:  'bg-[#1C2620] border-white/[0.07] shadow-[0_8px_32px_rgba(0,0,0,0.6)]',
+    // Table head
+    tableHead:  'bg-[#0F1512] border-white/[0.04]',
+    // Input
+    inputBg:    'bg-[#0F1512] border-white/[0.06] text-[#E8F0E5] focus:border-[#52B788]/40',
+    // Sidebar
+    sidebarBg:  'bg-[#111814] border-white/[0.04]',
+    navActive:  'bg-[#52B788]/12 text-[#52B788]',
+    navInactive:'text-[#627A5C] hover:bg-white/[0.03] hover:text-[#B0C5AA]',
+  };
+
+  return (
+    <ThemeContext.Provider value={{ isLightMode, toggleTheme, t }}>
+      <div className={`transition-colors duration-300 w-full min-h-screen font-sans ${t.bg}`}>
+        {children}
+      </div>
+    </ThemeContext.Provider>
+  );
+};
+
+export const useTheme = () => useContext(ThemeContext);
+
+export const ThemedCard = ({ children, className = '' }) => {
+  const { t } = useTheme();
+  return (
+    <div className={`${t.cardBg} rounded-2xl border transition-colors duration-300 p-6 ${className}`}>
+      {children}
+    </div>
+  );
+};
+
+export const ThemeToggleButton = () => {
+  const { isLightMode, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className={`fixed bottom-8 right-8 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-xl transition-all hover:scale-105 ${
+        isLightMode ? 'bg-[#1A2418] text-white' : 'bg-white text-[#0F1512]'
+      }`}
+    >
+      {isLightMode
+        ? <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+        : <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd"/></svg>
+      }
+    </button>
+  );
+};
+</file>
+
+<file path=".gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="eslint.config.js">
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>admin</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="postcss.config.js">
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+</file>
+
+<file path="README.md">
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+</file>
+
+<file path="tailwind.config.js">
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+</file>
+
+<file path="vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+</file>
+
+<file path="src/Sidebar.jsx">
+import React from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useTheme } from './ThemeContext';
+import { useAdminAuth } from './useAdminAuth';
+
+const NavItem = ({ icon, label, path, currentPath, navigate, t, badge }) => {
+  const active = currentPath === path;
+  return (
+    <button
+      onClick={() => navigate(path)}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-left text-sm
+        ${active ? t.navActive : t.navInactive} font-medium`}
+    >
+      <span className="flex-shrink-0">{icon}</span>
+      <span className="flex-1">{label}</span>
+      {badge && (
+        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full tracking-wider ${
+          badge === 'SA'
+            ? 'bg-amber-500/15 text-amber-500'
+            : `${t.accentBg} ${t.accentText}`
+        }`}>
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+};
+
+const iconCls = 'w-4 h-4';
+
+const navItems = [
+  {
+    path: '/dashboard', label: 'Overview',
+    icon: <svg className={iconCls} fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5" strokeWidth={1.75}/><rect x="14" y="3" width="7" height="7" rx="1.5" strokeWidth={1.75}/><rect x="3" y="14" width="7" height="7" rx="1.5" strokeWidth={1.75}/><rect x="14" y="14" width="7" height="7" rx="1.5" strokeWidth={1.75}/></svg>
+  },
+  {
+    path: '/users', label: 'Users',
+    icon: <svg className={iconCls} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+  },
+  {
+    path: '/moderation', label: 'Moderation',
+    icon: <svg className={iconCls} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+  },
+  {
+    path: '/dropoff', label: 'Drop-Off Nodes',
+    icon: <svg className={iconCls} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+  },
+  {
+    path: '/upcycle', label: 'Upcycle',
+    icon: <svg className={iconCls} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+  },
+];
+
+export default function Sidebar() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { isLightMode, toggleTheme, t } = useTheme();
+  const { isSuperAdmin, adminUser } = useAdminAuth();
+
+  const handleSignOut = () => {
+    if (window.confirm('Sign out of GreenSort Admin?')) navigate('/');
+  };
+
+  return (
+    <div className={`w-56 h-full ${t.sidebarBg} border-r flex flex-col shrink-0 transition-colors duration-300`}>
+
+      {/* Logo */}
+      <div className="px-5 py-5 flex items-center gap-2.5">
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isLightMode ? 'bg-[#3D7A58]' : 'bg-[#5E9E7A]/20'}`}>
+          <svg className={`w-4 h-4 ${isLightMode ? 'text-white' : 'text-[#7DBF96]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </div>
+        <div>
+          <h1 className={`text-sm font-semibold ${t.textMain} tracking-tight`}>GreenSort</h1>
+          <p className={`text-[9px] ${t.textMuted} tracking-widest uppercase`}>Admin</p>
+        </div>
+      </div>
+
+      <div className={`mx-4 h-px ${t.divider} mb-3`} />
+
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 space-y-0.5 pb-3" style={{ scrollbarWidth: 'none' }}>
+        <p className={`text-[9px] font-semibold uppercase tracking-widest ${t.textFaint} px-3 py-2`}>Main</p>
+        {navItems.map(item => (
+          <NavItem key={item.path} {...item} currentPath={location.pathname} navigate={navigate} t={t} />
+        ))}
+
+        <div className={`mx-1 h-px ${t.divider} my-3`} />
+        <p className={`text-[9px] font-semibold uppercase tracking-widest ${t.textFaint} px-3 py-2`}>System</p>
+
+        <NavItem
+          path="/access"
+          label="Admin Access"
+          currentPath={location.pathname}
+          navigate={navigate}
+          t={t}
+          badge={isSuperAdmin ? 'SA' : 'A'}
+          icon={<svg className={iconCls} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>}
+        />
+      </nav>
+
+      {/* Bottom */}
+      <div className={`p-3 border-t ${t.divider} space-y-2`}>
+        {/* Theme toggle */}
+        <button
+          onClick={toggleTheme}
+          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all ${
+            isLightMode
+              ? 'text-[#5E7A67] hover:bg-[#F3F6F1] hover:text-[#3D7A58]'
+              : 'text-[#5E7A67] hover:bg-white/[0.04] hover:text-[#A8BDA2]'
+          }`}
+        >
+          <span>{isLightMode ? 'Light mode' : 'Dark mode'}</span>
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {isLightMode
+              ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            }
+          </svg>
+        </button>
+
+        {/* User card */}
+        <div className={`flex items-center gap-2.5 p-2.5 rounded-xl ${isLightMode ? 'bg-[#F3F6F1]' : 'bg-white/[0.03]'}`}>
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${t.iconBg1}`}>
+            {(adminUser?.full_name || 'A')[0].toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`text-xs font-medium ${t.textMain} truncate`}>{adminUser?.full_name || 'Admin'}</p>
+            <p className={`text-[9px] ${t.accentText} font-medium`}>{isSuperAdmin ? 'Super Admin' : 'Admin'}</p>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className={`p-1.5 rounded-lg transition-all ${t.textMuted} hover:text-red-400 hover:bg-red-400/10`}
+            title="Sign out"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/supabase.js">
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = 'https://yaqpvcriphvcqdmpsfxa.supabase.co';
+const supabaseKey = 'sb_publishable_di2DEocf3L8DH9XUyy9CPg_r4uU0xQj';
+
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
+</file>
+
+<file path="package.json">
+{
+  "name": "admin",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emailjs/browser": "^4.4.1",
+    "@supabase/supabase-js": "^2.98.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.13.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "vite": "^7.3.1"
+  }
+}
+</file>
+
+<file path="src/ContentModeration.jsx">
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabase';
+import Sidebar from './Sidebar';
+import { useTheme } from './ThemeContext';
+
+export default function ContentModeration() {
+  const { isLightMode, t } = useTheme();
+  const [activeTab, setActiveTab] = useState('all_posts');
+  const [posts, setPosts] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [commentReports, setCommentReports] = useState([]);
+  const [userReports, setUserReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedReportDetails, setSelectedReportDetails] = useState(null);
+  const [viewImage, setViewImage] = useState(null);
+
+  useEffect(() => {
+    if (activeTab === 'all_posts') fetchPosts();
+    else if (activeTab === 'reports') fetchReports();
+    else if (activeTab === 'reported_comments') fetchCommentReports();
+    else if (activeTab === 'reported_users') fetchUserReports();
+  }, [activeTab]);
+
+  const timeAgo = (ds) => {
+    if (!ds) return 'Just now';
+    const s = Math.floor((Date.now() - new Date(ds)) / 1000);
+    if (s < 60) return 'Just now';
+    if (s < 3600) return `${Math.floor(s/60)}m ago`;
+    if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+    if (s < 2592000) return `${Math.floor(s/86400)}d ago`;
+    return `${Math.floor(s/2592000)}mo ago`;
+  };
+
+  const fetchPosts = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('posts').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      const mapped = (data || []).map(post => {
+        const authorName = post.user || 'Unknown User';
+        const initials = authorName !== 'Unknown User'
+          ? authorName.trim().split(' ').reduce((a, p, i) => i < 2 ? a + p[0] : a, '').toUpperCase()
+          : '?';
+        return { ...post, display_name: authorName, display_initials: initials.substring(0,2), display_image: post.image || null, display_text: post.desc || 'No content.', display_avatar: post.avatar || null };
+      });
+      setPosts(mapped);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  const fetchReports = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('post_reports').select('*, posts(*)').eq('status','Pending').order('created_at', { ascending: false });
+      if (error) throw error;
+      setReports(data || []);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  const fetchCommentReports = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('comment_reports').select('*, comments(*)').eq('status','Pending').order('created_at', { ascending: false });
+      if (error) throw error;
+      setCommentReports(data || []);
+    } catch (e) { console.error(e); setCommentReports([]); } finally { setLoading(false); }
+  };
+
+  const fetchUserReports = async () => {
+    setLoading(true);
+    try {
+      const { data: reportsData, error } = await supabase.from('user_reports').select('*').eq('status','Pending').order('created_at', { ascending: false });
+      if (error) throw error;
+      if (reportsData && reportsData.length > 0) {
+        const names = [...new Set(reportsData.map(r => r.reported_user))];
+        const { data: profiles } = await supabase.from('profiles').select('full_name, avatar_url').in('full_name', names);
+        const avatarMap = {};
+        if (profiles) profiles.forEach(p => { avatarMap[p.full_name] = p.avatar_url; });
+        setUserReports(reportsData.map(r => ({ ...r, reported_avatar: avatarMap[r.reported_user] || null })));
+      } else setUserReports([]);
+    } catch (e) { console.error(e); setUserReports([]); } finally { setLoading(false); }
+  };
+
+  const handleDeletePost = async (postId) => {
+    if (!window.confirm('Delete this post? This cannot be undone.')) return;
+    try {
+      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      if (error) throw error;
+      alert('Post deleted!');
+      fetchPosts(); fetchReports();
+    } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  const handleApproveReport = async (reportId, postId, reporterName, postTitle, reportReason) => {
+    if (!window.confirm('Approve this report and DELETE the post?')) return;
+    const note = `Thank you for reporting this post for "${reportReason}". We reviewed it, confirmed the violation, and removed the post.`;
+    try {
+      await supabase.from('posts').delete().eq('id', postId);
+      await supabase.from('notifications').insert([{ owner_name: reporterName, actor_name: 'GreenSort Admin', actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=2D6A4F&color=fff', action: `approved your report. Note: ${note}`, post_title: postTitle }]);
+      alert('Post deleted and notification sent!');
+      fetchReports(); fetchPosts();
+    } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  const handleDeclineReport = async (reportId, reporterName, postTitle, reportReason) => {
+    if (!window.confirm('Decline this report? Post stays active.')) return;
+    const note = `We reviewed your report on "${reportReason}". This post does not violate our standards at this time.`;
+    try {
+      await supabase.from('post_reports').update({ status: 'Resolved' }).eq('id', reportId);
+      await supabase.from('notifications').insert([{ owner_name: reporterName, actor_name: 'GreenSort Admin', actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff', action: `declined your report. Note: ${note}`, post_title: postTitle }]);
+      alert('Report dismissed and notification sent!');
+      fetchReports();
+    } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  // ── Shared styles ───────────────────────────────────────────────────────────
+  const cardBase = `rounded-2xl border overflow-hidden transition-all ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.05]'}`;
+  const cardHeader = (color) => `p-4 border-b flex items-start gap-3 ${
+    color === 'red'    ? (isLightMode ? 'bg-red-50 border-red-100'    : 'bg-red-500/5 border-red-500/10') :
+    color === 'yellow' ? (isLightMode ? 'bg-amber-50 border-amber-100' : 'bg-amber-500/5 border-amber-500/10') :
+    color === 'purple' ? (isLightMode ? 'bg-violet-50 border-violet-100' : 'bg-violet-500/5 border-violet-500/10') :
+    (isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-white/[0.02] border-white/[0.04]')
+  }`;
+  const iconColor = { red: 'text-red-500', yellow: 'text-amber-500', purple: 'text-violet-500' };
+  const reporterText = { red: isLightMode ? 'text-red-600' : 'text-red-400', yellow: isLightMode ? 'text-amber-700' : 'text-amber-400', purple: isLightMode ? 'text-violet-700' : 'text-violet-400' };
+  const reasonText = { red: isLightMode ? 'text-red-700' : 'text-red-300', yellow: isLightMode ? 'text-amber-800' : 'text-amber-200', purple: isLightMode ? 'text-violet-700' : 'text-violet-200' };
+
+  const Avatar = ({ src, name, size = 10 }) => {
+    const initials = (name || '?').substring(0,2).toUpperCase();
+    return src
+      ? <img src={src} alt={name} className={`w-${size} h-${size} rounded-full object-cover border ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/[0.07]'}`} />
+      : <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${t.iconBg1}`}>{initials}</div>;
+  };
+
+  const tabs = [
+    { key: 'all_posts',         label: 'All Posts',          count: 0 },
+    { key: 'reports',           label: 'Reported Posts',     count: reports.length },
+    { key: 'reported_comments', label: 'Reported Comments',  count: commentReports.length },
+    { key: 'reported_users',    label: 'Reported Person',    count: userReports.length },
+  ];
+
+  const badgeCount = (n) => n > 0
+    ? <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isLightMode ? 'bg-red-100 text-red-600' : 'bg-red-500/15 text-red-400'}`}>{n}</span>
+    : null;
+
+  return (
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+      <Sidebar />
+
+      <div className="flex-1 h-full overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+        <div className="p-6 lg:p-8 max-w-[1500px] mx-auto">
+
+          {/* Header */}
+          <div className="mb-7">
+            <h1 className={`text-2xl font-bold ${t.textMain}`}>Content Moderation</h1>
+            <p className={`${t.textMuted} mt-1 text-sm`}>Monitor community posts and user reports</p>
+          </div>
+
+          {/* Tabs */}
+          <div className={`flex flex-wrap gap-1 p-1 rounded-2xl border w-fit mb-7 ${isLightMode ? 'bg-[#F0F4EE] border-[#E3E8E1]' : 'bg-[#111814] border-white/[0.05]'}`}>
+            {tabs.map(tab => (
+              <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all duration-200 ${
+                  activeTab === tab.key
+                    ? (isLightMode ? 'bg-white text-[#2D6A4F] shadow-sm font-semibold' : 'bg-[#1C2620] text-[#52B788] border border-[#52B788]/20 font-semibold')
+                    : `${t.textMuted} hover:${t.textMain} font-medium`
+                }`}
+              >
+                {tab.label}
+                {badgeCount(tab.count)}
+              </button>
+            ))}
+          </div>
+
+          {/* Top bar */}
+          <div className="flex justify-between items-center mb-5">
+            <h2 className={`text-base font-semibold ${t.textMain}`}>
+              {activeTab === 'all_posts' ? 'Community Feed' : activeTab === 'reports' ? 'Pending Post Reports' : activeTab === 'reported_comments' ? 'Pending Comment Reports' : 'Pending User Reports'}
+            </h2>
+            <button
+              onClick={() => { if (activeTab === 'all_posts') fetchPosts(); else if (activeTab === 'reports') fetchReports(); else if (activeTab === 'reported_comments') fetchCommentReports(); else fetchUserReports(); }}
+              className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${t.accentText} ${isLightMode ? 'border-[#A8CFBA] bg-[#D8EDDF] hover:bg-[#C4E0CF]' : 'border-[#52B788]/25 bg-[#52B788]/8 hover:bg-[#52B788]/15'}`}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              Refresh
+            </button>
+          </div>
+
+          {loading ? (
+            <div className={`flex items-center justify-center h-48 rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.05]'}`}>
+              <p className={`text-sm font-medium animate-pulse ${t.accentText}`}>Loading data…</p>
+            </div>
+          ) : (
+            <>
+              {/* TAB 1: ALL POSTS */}
+              {activeTab === 'all_posts' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {posts.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No posts found.</div>
+                    : posts.map(post => (
+                      <div key={post.id} className={`${cardBase} flex flex-col hover:shadow-md transition-shadow`}>
+                        <div className={`p-4 flex items-center justify-between ${isLightMode ? 'border-b border-[#EDF0EB]' : 'border-b border-white/[0.04]'}`}>
+                          <div className="flex items-center gap-3">
+                            {post.display_avatar
+                              ? <img src={post.display_avatar} alt="avatar" className="w-9 h-9 rounded-full object-cover border border-[#E3E8E1]" />
+                              : <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>{post.display_initials}</div>
+                            }
+                            <div>
+                              <p className={`text-sm font-semibold ${t.textMain} max-w-[160px] truncate`}>{post.display_name}</p>
+                              <p className={`text-[11px] ${t.textMuted}`}>{timeAgo(post.created_at)}</p>
+                            </div>
+                          </div>
+                          {post.type && <span className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase ${isLightMode ? 'bg-[#DDE9F5] text-[#2A5FA8]' : 'bg-[#4A9ECC]/10 text-[#4A9ECC]'}`}>{post.type}</span>}
+                        </div>
+
+                        <div className="p-4 flex-1">
+                          {post.title && <h3 className={`font-semibold ${t.textMain} text-sm mb-1.5 leading-snug`}>{post.title}</h3>}
+                          <p className={`text-sm ${t.textMuted} leading-relaxed line-clamp-3`}>{post.display_text}</p>
+                        </div>
+
+                        {post.display_image && (
+                          <div className={`w-full h-52 flex items-center justify-center overflow-hidden border-t border-b ${isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'}`}>
+                            <img src={post.display_image} alt="Post" className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-90 transition-opacity" onClick={() => setViewImage(post.display_image)} onError={e => { e.target.style.display = 'none'; }} />
+                          </div>
+                        )}
+
+                        <div className={`p-3 flex items-center justify-between ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.015]'}`}>
+                          <div className={`flex gap-3 text-[11px] ${t.textMuted}`}>
+                            {post.location && <span className="flex items-center gap-1">{post.location}</span>}
+                            {post.price && post.price !== '0' && <span className={`font-semibold ${t.accentText}`}>{post.price}</span>}
+                          </div>
+                          <button onClick={() => handleDeletePost(post.id)} className={`p-1.5 rounded-lg transition-all ${t.textMuted} hover:text-red-500 hover:bg-red-500/10`}>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+              )}
+
+              {/* TAB 2: REPORTED POSTS */}
+              {activeTab === 'reports' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {reports.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No pending reports. All clear!</div>
+                    : reports.map(report => {
+                      const post = report.posts;
+                      if (!post) return null;
+                      const isLong = report.reason && report.reason.length > 80;
+                      return (
+                        <div key={report.id} className={`${cardBase} flex flex-col border-red-200/60 ${isLightMode ? '' : '!border-red-500/20'}`}>
+                          <div className={cardHeader('red')}>
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.red}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.red} mb-1`}>Reported by: {report.reporter_email}</p>
+                              <p className={`text-xs leading-relaxed ${reasonText.red}`}>
+                                {isLong ? (<>{report.reason.substring(0,80)}… <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">See more</button></>) : report.reason}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="p-4 flex items-center gap-3">
+                            {post.avatar ? <img src={post.avatar} alt="a" className="w-8 h-8 rounded-full object-cover" /> : <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>{(post.user||'?').substring(0,2).toUpperCase()}</div>}
+                            <div>
+                              <p className={`text-sm font-semibold ${t.textSub}`}>{post.user}</p>
+                              <p className={`text-[11px] ${t.textMuted}`}>Posted {timeAgo(post.created_at)}</p>
+                            </div>
+                          </div>
+                          <div className="px-4 pb-3 flex-1">
+                            {post.title && <p className={`font-semibold ${t.textMain} text-sm mb-1`}>{post.title}</p>}
+                            <p className={`text-xs ${t.textMuted} line-clamp-2`}>{post.desc || 'No content.'}</p>
+                          </div>
+                          {post.image && (
+                            <div className={`w-full h-44 flex items-center justify-center overflow-hidden border-t border-b ${isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'}`}>
+                              <img src={post.image} alt="Report" className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-80 transition-opacity" onClick={() => setViewImage(post.image)} onError={e => { e.target.style.display = 'none'; }} />
+                            </div>
+                          )}
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FDF8F8]' : 'bg-red-500/[0.03]'}`}>
+                            <button onClick={() => handleApproveReport(report.id, report.post_id, report.reporter_email, post.title, report.reason)}
+                              className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-red-500 hover:bg-red-400">
+                              Approve Report & Delete Post
+                            </button>
+                            <button onClick={() => handleDeclineReport(report.id, report.reporter_email, post.title, report.reason)}
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>
+                              Decline Report & Keep Post
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+
+              {/* TAB 3: REPORTED COMMENTS */}
+              {activeTab === 'reported_comments' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {commentReports.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No pending comment reports.</div>
+                    : commentReports.map(report => {
+                      const comment = report.comments;
+                      if (!comment) return null;
+                      const isLong = report.reason && report.reason.length > 80;
+                      return (
+                        <div key={report.id} className={`${cardBase} flex flex-col border-amber-200/60 ${isLightMode ? '' : '!border-amber-500/20'}`}>
+                          <div className={cardHeader('yellow')}>
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.yellow}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.yellow} mb-1`}>Reported by: {report.reporter_email}</p>
+                              <p className={`text-xs leading-relaxed ${reasonText.yellow}`}>
+                                {isLong ? (<>{report.reason.substring(0,80)}… <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">See more</button></>) : report.reason}
+                              </p>
+                            </div>
+                          </div>
+                          <div className={`m-4 p-4 rounded-xl border ${isLightMode ? 'bg-[#FAFBF9] border-[#EDF0EB]' : 'bg-white/[0.02] border-white/[0.04]'}`}>
+                            <div className="flex items-center gap-2.5 mb-3">
+                              {comment.avatar ? <img src={comment.avatar} alt="a" className="w-7 h-7 rounded-full object-cover" /> : <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${t.iconBg1}`}>{(comment.user_name||'?').substring(0,2).toUpperCase()}</div>}
+                              <div>
+                                <p className={`text-xs font-semibold ${t.textMain}`}>{comment.user_name}</p>
+                                <p className={`text-[10px] ${t.textMuted}`}>{timeAgo(comment.created_at)}</p>
+                              </div>
+                            </div>
+                            <p className={`text-xs ${t.textMuted} leading-relaxed border-l-2 pl-3 italic ${isLightMode ? 'border-amber-300' : 'border-amber-500/40'}`}>"{comment.text}"</p>
+                          </div>
+                          <div className="flex-1" />
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FFFBF4]' : 'bg-amber-500/[0.03]'}`}>
+                            <button onClick={() => alert('Add Delete Comment Logic here!')} className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-amber-500 hover:bg-amber-400">Delete Comment</button>
+                            <button onClick={() => alert('Add Dismiss Comment Logic here!')} className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>Dismiss Report</button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+
+              {/* TAB 4: REPORTED USERS */}
+              {activeTab === 'reported_users' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {userReports.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No pending user reports.</div>
+                    : userReports.map(report => {
+                      const isLong = report.reason && report.reason.length > 80;
+                      return (
+                        <div key={report.id} className={`${cardBase} flex flex-col border-violet-200/60 ${isLightMode ? '' : '!border-violet-500/20'}`}>
+                          <div className={cardHeader('purple')}>
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.purple}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.purple} mb-1`}>Reported by: {report.reporter_email}</p>
+                              <p className={`text-xs leading-relaxed ${reasonText.purple}`}>
+                                {isLong ? (<>{report.reason.substring(0,80)}… <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">See more</button></>) : report.reason}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex-1 flex flex-col items-center justify-center py-10 gap-3">
+                            {report.reported_avatar
+                              ? <img src={report.reported_avatar} alt="User" className={`w-20 h-20 rounded-full object-cover border-4 ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/[0.07]'}`} />
+                              : <div className={`w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold ${t.iconBg1}`}>{(report.reported_user||'U').substring(0,2).toUpperCase()}</div>
+                            }
+                            <div className="text-center">
+                              <h3 className={`font-semibold ${t.textMain} text-base`}>{report.reported_user || 'Unknown User'}</h3>
+                              <p className={`text-xs ${t.textMuted} mt-0.5`}>Reported Account</p>
+                            </div>
+                          </div>
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FAF8FF]' : 'bg-violet-500/[0.03]'}`}>
+                            <button onClick={() => alert('Add Ban User Logic here!')} className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-violet-600 hover:bg-violet-500">Ban / Warn User</button>
+                            <button onClick={() => alert('Add Dismiss User Report Logic here!')} className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>Dismiss Report</button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="h-12" />
+        </div>
+      </div>
+
+      {/* Full Reason Modal */}
+      {selectedReportDetails && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedReportDetails(null)}>
+          <div className={`w-full max-w-lg rounded-2xl border shadow-2xl ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.07]'}`} onClick={e => e.stopPropagation()}>
+            <div className={`p-5 border-b ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'} flex items-center justify-between`}>
+              <h3 className={`font-semibold ${t.textMain}`}>Full Report Details</h3>
+              <button onClick={() => setSelectedReportDetails(null)} className={`p-1.5 rounded-lg ${t.textMuted} hover:${t.textMain}`}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-5">
+              <p className={`text-[10px] font-semibold uppercase tracking-wider ${t.textMuted} mb-3`}>Reported by: {selectedReportDetails.reporter_email}</p>
+              <div className={`max-h-[50vh] overflow-y-auto p-4 rounded-xl ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.03]'}`}>
+                <p className={`text-sm ${t.textSub} leading-relaxed whitespace-pre-wrap break-words`}>{selectedReportDetails.reason}</p>
+              </div>
+              <button onClick={() => setSelectedReportDetails(null)} className={`w-full mt-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${isLightMode ? 'bg-[#F0F4EE] text-[#3D4E3A] hover:bg-[#E3E8E1]' : 'bg-white/[0.06] text-[#B0C5AA] hover:bg-white/[0.1]'}`}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Viewer */}
+      {viewImage && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-zoom-out" onClick={() => setViewImage(null)}>
+          <button className="absolute top-5 right-5 text-white/50 hover:text-white bg-black/50 p-2 rounded-full transition-colors" onClick={() => setViewImage(null)}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+          <img src={viewImage} alt="Enlarged" className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
+    </div>
+  );
+}
+</file>
+
+<file path="src/UpcycleManagement.jsx">
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabase';
+import Sidebar from './Sidebar';
+import { useTheme, ThemedCard } from './ThemeContext';
+import { useToast } from './Toast';
+import { useConfirm } from './ConfirmModal';
+import { logAdminAction } from './auditLog';
+import GuidePanel from './GuidePanel';
+
+export default function UpcycleManagement() {
+  const [activeTab, setActiveTab] = useState('pending');
+  const { isLightMode, t } = useTheme();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [submissions, setSubmissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedItem, setSelectedItem] = useState(null);
+
+  // ── All logic is preserved exactly as-is ──────────────────────────────────
+
+  const fetchSubmissions = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('upcycle_submissions')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setSubmissions(data || []);
+    } catch (e) {
+      toast.error('Failed to load submissions');
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchSubmissions(); }, []);
+
+  const handleApprove = async (item) => {
+    const ok = await confirm({ title: 'Approve submission?', message: `Approve "${item.title}" by ${item.submitted_by}? This will make it visible to the community.`, confirmLabel: 'Approve', confirmStyle: 'success' });
+    if (!ok) return;
+    try {
+      await supabase.from('upcycle_submissions').update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', item.id);
+      await logAdminAction({ action: 'APPROVE_UPCYCLE', targetTable: 'upcycle_submissions', targetId: item.id, details: { title: item.title } });
+      toast.success(`"${item.title}" approved`);
+      fetchSubmissions();
+      setSelectedItem(null);
+    } catch (e) { toast.error('Failed to approve'); }
+  };
+
+  const handleReject = async (item) => {
+    const ok = await confirm({ title: 'Reject submission?', message: `Reject "${item.title}"? The user will not be notified unless you message them separately.`, confirmLabel: 'Reject', confirmStyle: 'danger' });
+    if (!ok) return;
+    try {
+      await supabase.from('upcycle_submissions').update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', item.id);
+      await logAdminAction({ action: 'REJECT_UPCYCLE', targetTable: 'upcycle_submissions', targetId: item.id, details: { title: item.title } });
+      toast.success(`"${item.title}" rejected`);
+      fetchSubmissions();
+      setSelectedItem(null);
+    } catch (e) { toast.error('Failed to reject'); }
+  };
+
+  const filtered = submissions.filter(s => activeTab === 'all' || s.status === activeTab);
+  const counts = {
+    pending:  submissions.filter(s => s.status === 'pending').length,
+    approved: submissions.filter(s => s.status === 'approved').length,
+    rejected: submissions.filter(s => s.status === 'rejected').length,
+  };
+
+  // ── Design helpers ─────────────────────────────────────────────────────────
+
+  const STATUS = {
+    pending: {
+      dot:   'bg-amber-400',
+      label: isLightMode ? 'text-amber-700' : 'text-amber-400',
+      chip:  isLightMode ? 'bg-amber-50 border-amber-200'         : 'bg-amber-400/10 border-amber-400/20',
+      bar:   isLightMode ? 'bg-amber-300/60'                      : 'bg-amber-400/50',
+    },
+    approved: {
+      dot:   isLightMode ? 'bg-[#3D7A58]' : 'bg-[#7DBF96]',
+      label: isLightMode ? 'text-[#3D7A58]' : 'text-[#7DBF96]',
+      chip:  isLightMode ? 'bg-[#EAF4EE] border-[#C0DAC9]'       : 'bg-[#5E9E7A]/10 border-[#5E9E7A]/25',
+      bar:   isLightMode ? 'bg-[#3D7A58]'                         : 'bg-[#5E9E7A]',
+    },
+    rejected: {
+      dot:   'bg-red-400',
+      label: isLightMode ? 'text-red-600' : 'text-red-400',
+      chip:  isLightMode ? 'bg-red-50 border-red-200'             : 'bg-red-400/10 border-red-400/20',
+      bar:   isLightMode ? 'bg-red-300/60'                        : 'bg-red-400/50',
+    },
+  };
+
+  const StatusChip = ({ status }) => {
+    const cfg = STATUS[status] || STATUS.pending;
+    return (
+      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-medium capitalize ${cfg.chip} ${cfg.label}`}>
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+        {status}
+      </span>
+    );
+  };
+
+  const TABS = ['pending', 'approved', 'rejected', 'all'];
+
+  return (
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+      <Sidebar />
+
+      <div className="flex-1 h-full overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+        <div className="p-7 lg:p-9 max-w-[1300px] mx-auto">
+
+          {/* ── Header ────────────────────────────────────────────────────── */}
+          <div className="flex items-start justify-between mb-7 gap-4">
+            <div>
+              <h1 className={`text-xl font-semibold ${t.textMain}`}>Upcycle</h1>
+              <p className={`${t.textMuted} mt-0.5 text-sm`}>Review and moderate user-submitted project ideas</p>
+            </div>
+
+            {/* Summary pills */}
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {Object.entries(counts).map(([key, val]) =>
+                val > 0 ? (
+                  <span key={key} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium ${STATUS[key]?.chip} ${STATUS[key]?.label}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS[key]?.dot}`} />
+                    {val} {key}
+                  </span>
+                ) : null
+              )}
+            </div>
+          </div>
+
+          {/* ── Tabs ──────────────────────────────────────────────────────── */}
+          <div className={`inline-flex items-center gap-1 p-1 rounded-xl border mb-6 ${
+            isLightMode ? 'bg-[#EEF2EC] border-[#E0E8DC]' : 'bg-[#191F1C] border-white/[0.05]'
+          }`}>
+            {TABS.map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all duration-150 ${
+                  activeTab === tab
+                    ? (isLightMode
+                        ? 'bg-white text-[#3D7A58] shadow-sm'
+                        : 'bg-[#1E2822] text-[#7DBF96] border border-white/[0.05]')
+                    : t.textMuted
+                }`}
+              >
+                {tab}
+                {counts[tab] > 0 && (
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                    tab === 'pending'
+                      ? (isLightMode ? 'bg-amber-100 text-amber-700' : 'bg-amber-400/15 text-amber-400')
+                      : (isLightMode ? 'bg-[#F3F6F1] text-[#7A9082]' : 'bg-white/[0.06] text-[#5E7A67]')
+                  }`}>
+                    {counts[tab]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Content ───────────────────────────────────────────────────── */}
+          {loading ? (
+            <div className={`flex items-center justify-center h-48 rounded-2xl border text-sm animate-pulse ${
+              isLightMode ? 'bg-white border-[#E6EBE4] text-[#7A9082]' : 'bg-[#191F1C] border-white/[0.06] text-[#5E7A67]'
+            }`}>
+              Loading submissions…
+            </div>
+
+          ) : filtered.length === 0 ? (
+            <div className={`flex flex-col items-center justify-center py-20 rounded-2xl border ${
+              isLightMode ? 'bg-white border-[#E6EBE4]' : 'bg-[#191F1C] border-white/[0.06]'
+            }`}>
+              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center mb-3 ${t.iconBg1}`}>
+                <svg className={`w-5 h-5 ${t.accentText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <p className={`text-sm ${t.textMuted}`}>No {activeTab} submissions.</p>
+            </div>
+
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
+              {filtered.map((item) => {
+                const cfg = STATUS[item.status] || STATUS.pending;
+                return (
+                  <div
+                    key={item.id}
+                    className={`group flex flex-col rounded-2xl border overflow-hidden transition-all duration-200 ${
+                      isLightMode
+                        ? 'bg-white border-[#E6EBE4] hover:border-[#C0DAC9] hover:shadow-[0_4px_20px_rgba(61,122,88,0.07)]'
+                        : 'bg-[#191F1C] border-white/[0.06] hover:border-[#5E9E7A]/25'
+                    }`}
+                  >
+                    {/* Status accent bar along the top */}
+                    <div className={`h-0.5 w-full flex-shrink-0 ${cfg.bar}`} />
+
+                    <div className="p-5 flex flex-col gap-3 flex-1">
+
+                      {/* Title + status badge */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-semibold ${t.textMain} leading-snug`}>
+                            {item.title || 'Untitled Submission'}
+                          </p>
+                          <p className={`text-[11px] ${t.textMuted} mt-0.5`}>
+                            by {item.submitted_by || 'Unknown'}
+                          </p>
+                        </div>
+                        <StatusChip status={item.status} />
+                      </div>
+
+                      {/* Description */}
+                      <p className={`text-xs leading-relaxed ${t.textMuted} line-clamp-3 flex-1`}>
+                        {item.description || 'No description provided.'}
+                      </p>
+
+                      {/* Materials pill */}
+                      {item.materials && (
+                        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] ${t.textMuted} ${
+                          isLightMode ? 'bg-[#F6F8F5]' : 'bg-white/[0.03]'
+                        }`}>
+                          <svg className={`w-3.5 h-3.5 flex-shrink-0 ${t.accentText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+                          </svg>
+                          <span className="truncate">{item.materials}</span>
+                        </div>
+                      )}
+
+                      {/* Date */}
+                      <p className={`text-[10px] ${t.textFaint}`}>
+                        {new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </p>
+
+                      {/* Action buttons — only for pending */}
+                      {item.status === 'pending' && (
+                        <div className={`flex gap-2 pt-2 border-t ${t.divider}`}>
+                          <button
+                            onClick={() => handleApprove(item)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                              isLightMode
+                                ? 'bg-[#EAF4EE] text-[#3D7A58] hover:bg-[#DCF0E5]'
+                                : 'bg-[#5E9E7A]/10 text-[#7DBF96] hover:bg-[#5E9E7A]/18'
+                            }`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7"/>
+                            </svg>
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleReject(item)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                              isLightMode
+                                ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                                : 'bg-red-400/10 text-red-400 hover:bg-red-400/18'
+                            }`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="h-12" />
+        </div>
+      </div>
+
+      <GuidePanel page="upcycle" />
+    </div>
+  );
+}
+</file>
+
+<file path="src/UserManagement.jsx">
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from './supabase'; 
+import Sidebar from './Sidebar'; 
+import { useTheme, ThemedCard } from './ThemeContext'; // 🟢 Import ang Theme Context
+
+export default function UserManagement() {
+  const navigate = useNavigate();
+  const { isLightMode, t } = useTheme(); // 🟢 Gamitin ang theme variables
+  
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [onlineUserIds, setOnlineUserIds] = useState(new Set());
+
+  useEffect(() => {
+    fetchUsers();
+
+    const channel = supabase.channel('app-presence');
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState();
+      const activeIds = new Set();
+      Object.keys(state).forEach(key => {
+        const presenceData = state[key][0];
+        if (presenceData && presenceData.user_id) {
+          activeIds.add(presenceData.user_id);
+        }
+      });
+      setOnlineUserIds(activeIds);
+    });
+    channel.subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (error) {
+      console.error("Error fetching users:", error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId, userName) => {
+    const confirmDelete = window.confirm(`Are you sure you want to DELETE ${userName || 'this user'}?`);
+    if (confirmDelete) {
+      try {
+        const { error } = await supabase.from('profiles').delete().eq('id', userId);
+        if (error) throw error;
+        setUsers(users.filter(user => user.id !== userId));
+      } catch (error) {
+        console.error("Error deleting user:", error.message);
+      }
+    }
+  };
+
+  const recentUsersCount = users.filter(user => {
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    return new Date(user.created_at) > oneWeekAgo;
+  }).length;
+
+  const checkIfActive = (user) => onlineUserIds.has(user.id);
+
+  return (
+    // 🟢 Dinamiko na ang background color gamit ang t.bg
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden selection:bg-[#3CD085] selection:text-black`}>
+      
+      <Sidebar />
+
+      <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
+        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
+          
+          {/* HEADER */}
+          <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-6">
+            <div>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>User Management</h2>
+              <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Live User Database and Account Registry</p>
+            </div>
+          </div>
+
+          {/* TOP STATS - Gamit ang ThemedCard */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <ThemedCard className="flex flex-col justify-between h-[140px]">
+              <p className={`text-[13px] font-semibold ${t.textMain} tracking-wide`}>Total Registered Users</p>
+              <p className={`text-[40px] font-bold ${t.textMain} leading-none mt-auto`}>{users.length}</p>
+            </ThemedCard>
+
+            <ThemedCard className={`flex flex-col justify-between h-[140px] border ${isLightMode ? 'bg-[#E4EFE8]/30 border-[#98BAA3]/20' : 'bg-gradient-to-br from-[#151B1F] to-[#122119] border-[#3CD085]/20'}`}>
+              <p className={`text-[13px] font-semibold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#3CD085]'} tracking-wide`}>Recently Created</p>
+              <p className={`text-[40px] font-bold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#3CD085]'} leading-none mt-auto`}>+{recentUsersCount}</p>
+            </ThemedCard>
+
+            <ThemedCard className="flex flex-col justify-between h-[140px]">
+              <p className={`text-[13px] font-semibold ${t.textMain} tracking-wide`}>Active Online</p>
+              <div className="mt-auto flex items-center gap-3">
+                <p className={`text-[40px] font-bold ${t.textMain} leading-none`}>
+                  {users.filter(u => checkIfActive(u)).length}  
+                </p>
+                <span className={`w-2.5 h-2.5 rounded-full ${isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#3CD085] shadow-[0_0_8px_#3CD085]'} mt-2`}></span>
+              </div>
+            </ThemedCard>
+          </div>
+
+          {/* TABLE CONTAINER */}
+          <ThemedCard className="!p-0 overflow-hidden mb-10">
+            <div className={`p-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'} flex justify-between items-center`}>
+              <h3 className={`text-lg font-bold ${t.textMain}`}>Account Registry</h3>
+              <button 
+                onClick={fetchUsers} 
+                className={`text-xs font-bold ${isLightMode ? 'text-[#4A7D5C] bg-[#98BAA3]/10' : 'text-[#3CD085] bg-[#3CD085]/10'} px-4 py-2 rounded-lg border border-current transition-all flex items-center gap-2`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Refresh Data
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              {loading ? (
+                <div className={`p-10 text-center ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#3CD085]'} animate-pulse text-sm font-bold tracking-widest uppercase`}>Loading Registry...</div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className={`${isLightMode ? 'bg-[#F9FBF9]' : 'bg-[#101417]'} ${t.textMuted} text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
+                      <th className="px-6 py-4 font-bold">User Details</th>
+                      <th className="px-6 py-4 font-bold">Role</th>
+                      <th className="px-6 py-4 font-bold">Status</th>
+                      <th className="px-6 py-4 font-bold">Date Joined</th>
+                      <th className="px-6 py-4 font-bold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {users.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" className={`p-8 text-center ${t.textMuted}`}>No user records found.</td>
+                      </tr>
+                    ) : (
+                      users.map((user) => (
+                        <tr key={user.id} className={`border-b ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'} transition-colors group`}>
+                          <td className="px-6 py-4">
+                            <p className={`font-bold ${t.textMain}`}>{user.full_name || 'Anonymous User'}</p>
+                            <p className={`text-xs ${t.textMuted} mt-0.5`}>{user.email}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`${isLightMode ? 'bg-[#F0F4F1] text-[#6C9A7D]' : 'bg-[#231B2A] text-[#9A73C2]'} py-1.5 px-3 rounded-md text-[10px] font-bold border border-white/[0.05] tracking-wider`}>
+                              {user.role ? user.role.toUpperCase() : 'RESIDENT'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            {checkIfActive(user) ? (
+                              <span className={`flex items-center ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#3CD085]'} text-xs font-bold`}>
+                                <span className={`w-2 h-2 rounded-full ${isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#3CD085] shadow-[0_0_8px_#3CD085]'} mr-2`}></span> Online
+                              </span>
+                            ) : (
+                              <span className={`flex items-center ${t.textMuted} text-xs font-medium`}>
+                                <span className={`w-2 h-2 rounded-full ${isLightMode ? 'bg-[#DCE4DF]' : 'bg-[#35403C]'} mr-2`}></span> Offline
+                              </span>
+                            )}
+                          </td>
+                          <td className={`px-6 py-4 ${t.textMuted} text-xs`}>
+                            {new Date(user.created_at).toLocaleDateString('en-US', {
+                              year: 'numeric', month: 'short', day: 'numeric'
+                            })}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <button 
+                              onClick={() => handleDeleteUser(user.id, user.full_name)}
+                              className={`${t.textMuted} hover:text-[#F45B69] hover:bg-[#F45B69]/10 p-2 rounded-lg transition-all`}
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </ThemedCard>
+
+          <div className="h-12"></div>
+        </div>
+      </div>
+      
+      <style dangerouslySetInnerHTML={{__html: `
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}} />
+    </div>
+  );
+}
+</file>
+
+<file path="src/App.jsx">
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import AdminLogin from './AdminLogin'; 
+import Dashboard from './Dashboard';
+import DropOffNodes from './DropOffNodes';
+import UpcycleManagement from './UpcycleManagement';
+import UserManagement from './UserManagement'; 
+import ContentModeration from './ContentModeration';
+import PresenceTracker from './PresenceTracker';
+import { ThemeProvider } from './ThemeContext'; // 🟢 1. I-import ang Provider
+
+function App() {
+  return (
+    <ThemeProvider> {/* 🟢 2. I-wrap ang buong app dito */}
+      <BrowserRouter>
+        <PresenceTracker />
+        <Routes>
+          <Route path="/" element={<AdminLogin />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/users" element={<UserManagement />} /> 
+          <Route path="/moderation" element={<ContentModeration />} /> 
+          {/* Siguraduhin na ang path dito ay /dropoff at /upcycle */}
+          <Route path="/dropoff" element={<DropOffNodes />} />
+          <Route path="/upcycle" element={<UpcycleManagement />} />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
+  );
+}
+
+export default App;
+</file>
+
+<file path="src/Dashboard.jsx">
+import React, { createContext, useContext, useState, useEffect } from 'react';
+
+const ThemeContext = createContext();
+
+export const ThemeProvider = ({ children }) => {
+  const [isLightMode, setIsLightMode] = useState(() => {
+    return localStorage.getItem('theme') !== 'dark';
+  });
+
+  const toggleTheme = () => setIsLightMode(prev => !prev);
+
+  useEffect(() => {
+    localStorage.setItem('theme', isLightMode ? 'light' : 'dark');
+  }, [isLightMode]);
+
+  // ─── Elegant Green Palette ────────────────────────────────────────────────
+  // Light: warm ivory/linen base, deep forest green accents
+  // Dark:  deep slate base (#0F1512 — near-black with green undertone), sage accents
+  const t = isLightMode ? {
+    // Backgrounds
+    bg:         'bg-[#F4F6F2]',         // warm off-white, slight sage tint
+    innerBg:    'bg-[#FAFBF9]',
+    // Cards
+    cardBg:     'bg-white border-[#E3E8E1] shadow-[0_1px_4px_rgba(0,0,0,0.04)]',
+    cardBorder: 'border-[#E3E8E1]',
+    // Text
+    textMain:   'text-[#1A2418]',       // deep forest
+    textSub:    'text-[#3D4E3A]',       // dark sage
+    textMuted:  'text-[#7A8C77]',       // muted sage
+    // Accents
+    accentText: 'text-[#2D6A4F]',       // deep emerald
+    accentBg:   'bg-[#D8EDDF]',
+    accentBorder:'border-[#A8CFBA]',
+    accentHex:  '#2D6A4F',
+    accentLight: '#D8EDDF',
+    // Row / dividers
+    rowHover:   'hover:bg-[#F7F9F6]',
+    divider:    'border-[#EDF0EB]',
+    // Chip
+    chipBg:     'bg-[#EEF4EC] text-[#2D6A4F]',
+    // Icon bg families
+    iconBg1:    'bg-[#D8EDDF] text-[#2D6A4F]',
+    iconBg2:    'bg-[#DDE9F5] text-[#2A5FA8]',
+    iconBg3:    'bg-[#FAECE8] text-[#A0442A]',
+    // Chart / donut
+    donutGradient: 'conic-gradient(#2D6A4F 0% 50%, #74C69D 50% 72%, #B7DFCA 72% 87%, #D8EDDF 87% 100%)',
+    donutInner: 'bg-white',
+    tooltipBg:  'bg-white border-[#E3E8E1] shadow-[0_8px_24px_rgba(0,0,0,0.08)]',
+    // Table head
+    tableHead:  'bg-[#F7F9F6] border-[#EDF0EB]',
+    // Input
+    inputBg:    'bg-[#F4F6F2] border-[#DDE3DA] text-[#1A2418] focus:border-[#2D6A4F]/50',
+    // Sidebar
+    sidebarBg:  'bg-white border-[#E3E8E1]',
+    navActive:  'bg-[#D8EDDF] text-[#2D6A4F]',
+    navInactive:'text-[#7A8C77] hover:bg-[#F0F4EE] hover:text-[#1A2418]',
+  } : {
+    // Backgrounds
+    bg:         'bg-[#0F1512]',         // near-black, deep forest undertone
+    innerBg:    'bg-[#0F1512]',
+    // Cards
+    cardBg:     'bg-[#161D19] border-white/[0.05] shadow-[0_1px_8px_rgba(0,0,0,0.3)]',
+    cardBorder: 'border-white/[0.05]',
+    // Text
+    textMain:   'text-[#E8F0E5]',       // warm near-white
+    textSub:    'text-[#B0C5AA]',       // light sage
+    textMuted:  'text-[#627A5C]',       // muted forest
+    // Accents
+    accentText: 'text-[#52B788]',       // mid-tone sage emerald
+    accentBg:   'bg-[#52B788]/10',
+    accentBorder:'border-[#52B788]/25',
+    accentHex:  '#52B788',
+    accentLight: 'rgba(82,183,136,0.12)',
+    // Row / dividers
+    rowHover:   'hover:bg-white/[0.025]',
+    divider:    'border-white/[0.05]',
+    // Chip
+    chipBg:     'bg-[#52B788]/10 text-[#52B788]',
+    // Icon bg families
+    iconBg1:    'bg-[#52B788]/12 text-[#52B788]',
+    iconBg2:    'bg-[#4A9ECC]/12 text-[#4A9ECC]',
+    iconBg3:    'bg-[#E87A5D]/12 text-[#E87A5D]',
+    // Chart / donut
+    donutGradient: 'conic-gradient(#52B788 0% 50%, #2D6A4F 50% 72%, #1B4332 72% 87%, #0F1512 87% 100%)',
+    donutInner: 'bg-[#161D19]',
+    tooltipBg:  'bg-[#1C2620] border-white/[0.07] shadow-[0_8px_32px_rgba(0,0,0,0.6)]',
+    // Table head
+    tableHead:  'bg-[#0F1512] border-white/[0.04]',
+    // Input
+    inputBg:    'bg-[#0F1512] border-white/[0.06] text-[#E8F0E5] focus:border-[#52B788]/40',
+    // Sidebar
+    sidebarBg:  'bg-[#111814] border-white/[0.04]',
+    navActive:  'bg-[#52B788]/12 text-[#52B788]',
+    navInactive:'text-[#627A5C] hover:bg-white/[0.03] hover:text-[#B0C5AA]',
+  };
+
+  return (
+    <ThemeContext.Provider value={{ isLightMode, toggleTheme, t }}>
+      <div className={`transition-colors duration-300 w-full min-h-screen font-sans ${t.bg}`}>
+        {children}
+      </div>
+    </ThemeContext.Provider>
+  );
+};
+
+export const useTheme = () => useContext(ThemeContext);
+
+export const ThemedCard = ({ children, className = '' }) => {
+  const { t } = useTheme();
+  return (
+    <div className={`${t.cardBg} rounded-2xl border transition-colors duration-300 p-6 ${className}`}>
+      {children}
+    </div>
+  );
+};
+
+export const ThemeToggleButton = () => {
+  const { isLightMode, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className={`fixed bottom-8 right-8 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-xl transition-all hover:scale-105 ${
+        isLightMode ? 'bg-[#1A2418] text-white' : 'bg-white text-[#0F1512]'
+      }`}
+    >
+      {isLightMode
+        ? <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+        : <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd"/></svg>
+      }
+    </button>
+  );
+};
+</file>
+
+<file path="src/DropOffNodes.jsx">
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from './supabase';
+import emailjs from '@emailjs/browser'; 
+import Sidebar from './Sidebar'; 
+import { useTheme, ThemedCard } from './ThemeContext'; // 🟢 Import Theme Context
+
+const DropOffNodes = () => {
+  const navigate = useNavigate();
+  const { isLightMode, t } = useTheme(); // 🟢 Gamitin ang global theme variables
+  
+  const [activeTab, setActiveTab] = useState('requests');
+  const [applications, setApplications] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchApplications = async () => {
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from('dropoff_applications')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error("Error fetching data:", error);
+    } else {
+      setApplications(data || []);
+    }
+    setIsLoading(false);
+  };
+
+  useEffect(() => {
+    fetchApplications();
+  }, []);
+
+  // ... (handleApprove, handleReject, handleDelete, handleDeactivate functions remain exactly the same)
+  const handleApprove = async (id, email, programName) => {
+    if (window.confirm(`Are you sure you want to approve ${programName}?`)) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !emailRegex.test(email)) {
+          alert(`❌ Approval Failed: "${email}" is not a valid email address.`);
+          return; 
+      }
+      try {
+        await emailjs.send(
+          'service_nzpn1cn',       
+          'template_adevhna',      
+          { to_email: email, to_name: programName },
+          { publicKey: 'lkfpdujTp2Sx9Eq3u' }      
+        );
+        const { error } = await supabase.from('dropoff_applications').update({ status: 'approved' }).eq('id', id);
+        if (error) {
+          alert("Email sent, but database error: " + error.message);
+        } else {
+          alert(`✅ Success! ${programName} is now approved!`);
+          fetchApplications(); 
+        }
+      } catch (emailError) {
+        console.error("Email Error Details:", emailError);
+        alert(`❌ Approval Failed!`);
+      }
+    }
+  };
+
+  const handleReject = async (id, email, programName) => {
+    const reason = window.prompt(`Enter reason for rejection:`, "Your application did not meet our current requirements.");
+    if (reason !== null) { 
+      try {
+        await emailjs.send(
+          'service_nzpn1cn', 'ILAGAY_MO_DITO_ANG_REJECT_TEMPLATE_ID', 
+          { to_email: email, to_name: programName, reject_reason: reason },
+          { publicKey: 'lkfpdujTp2Sx9Eq3u' }      
+        );
+        await supabase.from('dropoff_applications').update({ status: 'rejected' }).eq('id', id);
+        fetchApplications(); 
+      } catch (e) { console.error(e); }
+    }
+  };
+
+  const handleDelete = async (id, programName) => {
+    if (window.confirm(`Permanently DELETE ${programName}?`)) {
+      await supabase.from('dropoff_applications').delete().eq('id', id);
+      fetchApplications();
+    }
+  };
+
+  const handleDeactivate = async (id, programName) => {
+    if (window.confirm(`DEACTIVATE ${programName}?`)) {
+      await supabase.from('dropoff_applications').update({ status: 'deactivated' }).eq('id', id);
+      fetchApplications();
+    }
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const filteredApps = applications.filter(app => {
+    if (activeTab === 'requests') return app.status === 'pending';
+    if (activeTab === 'active') return app.status === 'approved';
+    return true;
+  });
+
+  const pendingCount = applications.filter(a => a.status === 'pending').length;
+
+  return (
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden selection:bg-[#2CD87D] selection:text-black`}>
+      
+      <Sidebar />
+
+      <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
+        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
+          
+          {/* HEADER */}
+          <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-6">
+            <div>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Node Management</h2>
+              <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Review and manage drop-off centers</p>
+            </div>
+          </div>
+
+          {/* TOGGLE TABS */}
+          <div className={`flex items-center ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7]' : 'bg-[#131917] border-white/[0.05]'} border rounded-full p-1.5 mb-8 w-fit shadow-sm`}>
+            <button 
+              onClick={() => setActiveTab('requests')} 
+              className={`flex items-center gap-3 px-8 py-2.5 rounded-full font-bold text-sm transition-all duration-300 ${
+                activeTab === 'requests' 
+                  ? (isLightMode ? 'bg-white text-[#4A7D5C] shadow-sm' : 'bg-[#18201B] text-[#2CD87D] border border-[#2CD87D]/20 shadow-[0_0_15px_rgba(44,216,125,0.1)]') 
+                  : `${t.textMuted} hover:${t.textMain}`
+              }`}
+            >
+                Requests 
+                {pendingCount > 0 && (
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-black ${isLightMode ? 'bg-[#F45B69]/10 text-[#C45E65]' : 'bg-[#FF5252]/10 text-[#FF5252] border border-[#FF5252]/30'}`}>
+                    {pendingCount}
+                  </span>
+                )}
+            </button>
+            <button 
+              onClick={() => setActiveTab('active')} 
+              className={`px-8 py-2.5 rounded-full font-bold text-sm transition-all duration-300 ${
+                activeTab === 'active' 
+                  ? (isLightMode ? 'bg-white text-[#4A7D5C] shadow-sm' : 'bg-[#18201B] text-[#2CD87D] border border-[#2CD87D]/20 shadow-[0_0_15px_rgba(44,216,125,0.1)]') 
+                  : `${t.textMuted} hover:${t.textMain}`
+              }`}
+            >
+                Active Nodes
+            </button>
+          </div>
+
+          {/* MAIN TABLE CONTAINER */}
+          <ThemedCard className="!p-0 overflow-hidden mb-10 relative group">
+            
+            <div className={`p-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'} flex justify-between items-center`}>
+                <h3 className={`text-lg font-bold ${t.textMain} flex items-center gap-3`}>
+                    <svg className={`w-5 h-5 ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#2CD87D]'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    {activeTab === 'requests' ? 'Pending Applications' : 'Active Centers'}
+                </h3>
+            </div>
+
+            <div className="overflow-x-auto min-h-[300px]">
+                {isLoading ? (
+                    <div className={`flex justify-center items-center h-[200px] ${isLightMode ? 'text-[#6C9A7D]' : 'text-[#2CD87D]'} text-sm font-bold tracking-widest animate-pulse`}>LOADING DATA...</div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className={`${isLightMode ? 'bg-[#F9FBF9]' : 'bg-[#0A0F0D]'} ${t.textMuted} text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
+                        <th className="py-4 px-8 font-bold">Station Name</th>
+                        <th className="py-4 px-4 font-bold">Contact No.</th>
+                        <th className="py-4 px-4 font-bold">Location</th>
+                        <th className="py-4 px-4 font-bold">Duration</th>
+                        {activeTab === 'requests' && <th className="py-4 px-4 font-bold">Date Applied</th>}
+                        {activeTab === 'requests' && <th className="py-4 px-4 font-bold">Document</th>}
+                        <th className="py-4 px-8 font-bold text-right">Actions</th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="text-sm">
+                      {filteredApps.length === 0 ? (
+                          <tr>
+                              <td colSpan="7" className={`py-10 text-center ${t.textMuted} font-medium italic`}>No records found.</td>
+                          </tr>
+                      ) : (
+                        filteredApps.map((app) => (
+                          <tr key={app.id} className={`border-b ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'} transition-colors group/row`}>
+                            <td className={`py-5 px-8 font-bold ${t.textMain} group-hover/row:text-[#2CD87D] transition-colors`}>{app.program_name}</td>
+                            <td className={`py-5 px-4 ${t.textMuted} text-xs font-medium`}>{app.contact_number}</td>
+                            <td className={`py-5 px-4 ${t.textMuted} text-xs font-medium`}>{app.barangay}, {app.city}</td>
+                            <td className="py-5 px-4">
+                              <span className={`px-3 py-1.5 rounded-md text-[10px] font-bold border tracking-wider ${
+                                  app.operation_duration.includes('More') 
+                                    ? (isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C] border-[#98BAA3]/30' : 'bg-[#005F31]/20 text-[#2CD87D] border-[#00964E]/30') 
+                                    : 'bg-[#FF9800]/10 text-[#FF9800] border-[#FF9800]/20'
+                              }`}>
+                                  {app.operation_duration.includes('More') ? 'LONG-TERM' : 'SHORT-TERM'}
+                              </span>
+                            </td>
+
+                            {activeTab === 'requests' ? (
+                              <>
+                                <td className={`py-5 px-4 ${t.textMuted} text-xs font-medium`}>{formatDate(app.created_at)}</td>
+                                <td className="py-5 px-4">
+                                  {app.permit_url ? (
+                                      <button 
+                                        onClick={() => window.open(app.permit_url, '_blank')}
+                                        className={`px-4 py-1.5 ${isLightMode ? 'bg-[#F0F4F1] text-[#6B7A74] hover:bg-white border-[#DCE4DF]' : 'bg-[#18201B] text-[#8B9B90] hover:text-white border-white/10'} border rounded-md transition-all text-[10px] font-bold tracking-widest`}
+                                      >
+                                        VIEW FILE
+                                      </button>
+                                  ) : (
+                                      <span className={`${t.textMuted} font-medium text-xs italic`}>No link</span>
+                                  )}
+                                </td>
+                                <td className="py-5 px-8 text-right">
+                                  <div className="flex gap-4 justify-end">
+                                      <button onClick={() => handleApprove(app.id, app.user_email, app.program_name)} className={`${t.textMuted} hover:text-[#2CD87D] hover:bg-[#2CD87D]/10 p-2 rounded-lg transition-all`}>
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" /></svg>
+                                      </button>
+                                      <button onClick={() => handleReject(app.id, app.user_email, app.program_name)} className={`${t.textMuted} hover:text-[#F45B69] hover:bg-[#F45B69]/10 p-2 rounded-lg transition-all`}>
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                                      </button>
+                                  </div>
+                                </td>
+                              </>
+                            ) : (
+                              <td className="py-5 px-8 text-right">
+                                <div className="flex gap-4 justify-end">
+                                    <button onClick={() => handleDelete(app.id, app.program_name)} className={`${t.textMuted} hover:text-[#F45B69] hover:bg-[#F45B69]/10 p-2 rounded-lg transition-all`}>
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    </button>
+                                    <button onClick={() => handleDeactivate(app.id, app.program_name)} className={`${t.textMuted} hover:text-[#FF9800] hover:bg-[#FF9800]/10 p-2 rounded-lg transition-all`}>
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" /></svg>
+                                    </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                )}
+            </div>
+            
+            <div className={`h-1 w-full bg-gradient-to-r from-transparent ${isLightMode ? 'via-[#98BAA3]/40' : 'via-[#2CD87D]/30'} to-transparent`}></div>
+          </ThemedCard>
+
+          <div className="h-12"></div>
+        </div>
+      </div>
+      
+      <style dangerouslySetInnerHTML={{__html: `
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}} />
+    </div>
+  );
+};
+
+export default DropOffNodes;
+</file>
+
+</files>

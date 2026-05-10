@@ -1,634 +1,762 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from './supabase'; 
+import { supabase } from './supabase';
 import Sidebar from './Sidebar';
-
+import { useTheme } from './ThemeContext';
 
 export default function ContentModeration() {
+  const { isLightMode, t } = useTheme();
   const [activeTab, setActiveTab] = useState('all_posts');
   const [posts, setPosts] = useState([]);
   const [reports, setReports] = useState([]);
-  
-  // 🟢 BAGONG STATES PARA SA COMMENTS AT USERS REPORTS
   const [commentReports, setCommentReports] = useState([]);
   const [userReports, setUserReports] = useState([]);
-  
+  const [appeals, setAppeals] = useState([]);           // 🟢 NEW
   const [loading, setLoading] = useState(true);
-  
-  const [selectedReportDetails, setSelectedReportDetails] = useState(null); 
-  const [viewImage, setViewImage] = useState(null); 
-  const [expandedReasons, setExpandedReasons] = useState({});
+  const [selectedReportDetails, setSelectedReportDetails] = useState(null);
+  const [viewImage, setViewImage] = useState(null);
+  const [banModal, setBanModal]     = useState(null);   // { report } | null
 
   useEffect(() => {
-    if (activeTab === 'all_posts') fetchPosts();
-    else if (activeTab === 'reports') fetchReports();
-    else if (activeTab === 'reported_comments') fetchCommentReports(); // 🟢 FETCH COMMENTS
-    else if (activeTab === 'reported_users') fetchUserReports(); // 🟢 FETCH USERS
+    if (activeTab === 'all_posts')         fetchPosts();
+    else if (activeTab === 'reports')      fetchReports();
+    else if (activeTab === 'reported_comments') fetchCommentReports();
+    else if (activeTab === 'reported_users')    fetchUserReports();
+    else if (activeTab === 'appeals')      fetchAppeals();   // 🟢 NEW
   }, [activeTab]);
 
-  const timeAgo = (dateString) => {
-    if (!dateString) return "Just now";
-    const date = new Date(dateString);
-    const seconds = Math.floor((new Date() - date) / 1000);
-    let interval = seconds / 31536000;
-    if (interval > 1) return Math.floor(interval) + "y ago";
-    interval = seconds / 2592000;
-    if (interval > 1) return Math.floor(interval) + "mo ago";
-    interval = seconds / 86400;
-    if (interval > 1) return Math.floor(interval) + "d ago";
-    interval = seconds / 3600;
-    if (interval > 1) return Math.floor(interval) + "h ago";
-    interval = seconds / 60;
-    if (interval > 1) return Math.floor(interval) + "m ago";
-    return "Just now";
+  const timeAgo = (ds) => {
+    if (!ds) return 'Just now';
+    const s = Math.floor((Date.now() - new Date(ds)) / 1000);
+    if (s < 60) return 'Just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    if (s < 2592000) return `${Math.floor(s / 86400)}d ago`;
+    return `${Math.floor(s / 2592000)}mo ago`;
   };
 
+  // ─── Existing fetchers ────────────────────────────────────────────────────
   const fetchPosts = async () => {
     setLoading(true);
     try {
-      const { data: postsData, error: postsError } = await supabase
-        .from('posts') 
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (postsError) throw postsError;
-
-      const mappedPosts = (postsData || []).map(post => {
-        const authorName = post.user || "Unknown User"; 
-        const postText = post.desc || "No text content provided."; 
-        const postImage = post.image || null; 
-        const userAvatar = post.avatar || null; 
-
-        let initials = "?";
-        if (authorName && authorName !== "Unknown User") {
-            const nameParts = authorName.trim().split(' ');
-            initials = nameParts.length > 1 
-                ? (nameParts[0][0] + nameParts[1][0]).toUpperCase() 
-                : authorName.substring(0, 2).toUpperCase();
-        }
-
-        return {
-          ...post,
-          display_name: authorName,
-          display_initials: initials.substring(0,2), 
-          display_image: postImage,
-          display_text: postText,
-          display_avatar: userAvatar
-        };
+      const { data, error } = await supabase.from('posts').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      const mapped = (data || []).map(post => {
+        const authorName = post.user || 'Unknown User';
+        const initials = authorName !== 'Unknown User'
+          ? authorName.trim().split(' ').reduce((a, p, i) => i < 2 ? a + p[0] : a, '').toUpperCase()
+          : '?';
+        return { ...post, display_name: authorName, display_initials: initials.substring(0, 2), display_image: post.image || null, display_text: post.desc || 'No content.', display_avatar: post.avatar || null };
       });
-
-      setPosts(mappedPosts);
-    } catch (error) {
-      console.error("Error fetching posts:", error.message);
-    } finally {
-      setLoading(false);
-    }
+      setPosts(mapped);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
   const fetchReports = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('post_reports')
-        .select('*, posts(*)') 
-        .eq('status', 'Pending')
-        .order('created_at', { ascending: false });
-
+      const { data, error } = await supabase.from('post_reports').select('*, posts(*)').eq('status', 'Pending').order('created_at', { ascending: false });
       if (error) throw error;
       setReports(data || []);
-    } catch (error) {
-      console.error("Error fetching reports:", error.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // 🟢 FETCH REPORTED COMMENTS
   const fetchCommentReports = async () => {
     setLoading(true);
     try {
-      // ⚠️ Tiyakin na 'comment_reports' ang pangalan ng table mo sa Supabase
-      const { data, error } = await supabase
-        .from('comment_reports') 
-        .select('*, comments(*)') 
-        .eq('status', 'Pending')
-        .order('created_at', { ascending: false });
-
+      const { data, error } = await supabase.from('comment_reports').select('*, comments(*)').eq('status', 'Pending').order('created_at', { ascending: false });
       if (error) throw error;
       setCommentReports(data || []);
-    } catch (error) {
-      console.error("Error fetching comment reports:", error.message);
-      setCommentReports([]); // Fallback kung wala pang table
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); setCommentReports([]); } finally { setLoading(false); }
   };
 
-  // 🟢 FETCH REPORTED USERS (Messaging)
-  // 🟢 FETCH REPORTED USERS (Messaging) AT KUNIN ANG AVATAR NILA
   const fetchUserReports = async () => {
     setLoading(true);
     try {
-      const { data: reportsData, error } = await supabase
-        .from('user_reports')
-        .select('*') 
-        .eq('status', 'Pending')
-        .order('created_at', { ascending: false });
-
+      const { data: reportsData, error } = await supabase.from('user_reports').select('*').eq('status', 'Pending').order('created_at', { ascending: false });
       if (error) throw error;
-
-      // 🟢 Kung may reports, hanapin natin yung mga avatar nila sa profiles table
       if (reportsData && reportsData.length > 0) {
-        // Kunin lahat ng unique na pangalan ng mga nire-report
-        const userNames = [...new Set(reportsData.map(r => r.reported_user))];
-        
-        // I-fetch ang mga avatar nila mula sa profiles
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('full_name, avatar_url')
-          .in('full_name', userNames);
-
-        // Gumawa ng map para madaling hanapin
+        const names = [...new Set(reportsData.map(r => r.reported_user))];
+        const { data: profiles } = await supabase.from('profiles').select('full_name, avatar_url').in('full_name', names);
         const avatarMap = {};
-        if (profiles) {
-          profiles.forEach(p => {
-            avatarMap[p.full_name] = p.avatar_url;
-          });
-        }
-
-        // Idikit yung avatar sa report data
-        const enrichedReports = reportsData.map(report => ({
-          ...report,
-          reported_avatar: avatarMap[report.reported_user] || null
-        }));
-
-        setUserReports(enrichedReports);
-      } else {
-        setUserReports([]);
-      }
-
-    } catch (error) {
-      console.error("Error fetching user reports:", error.message);
-      setUserReports([]); 
-    } finally {
-      setLoading(false);
-    }
+        if (profiles) profiles.forEach(p => { avatarMap[p.full_name] = p.avatar_url; });
+        setUserReports(reportsData.map(r => ({ ...r, reported_avatar: avatarMap[r.reported_user] || null })));
+      } else setUserReports([]);
+    } catch (e) { console.error(e); setUserReports([]); } finally { setLoading(false); }
   };
 
-  const handleDeletePost = async (postId) => {
-    if (window.confirm("Are you sure you want to DELETE this post? This cannot be undone.")) {
-      try {
-        const { error } = await supabase.from('posts').delete().eq('id', postId);
-        if (error) throw error;
-        
-        alert("Post deleted successfully!");
-        fetchPosts();
-        fetchReports(); 
-      } catch (error) {
-        alert("Error deleting post: " + error.message);
+  // ─── 🟢 NEW: Appeals fetcher ─────────────────────────────────────────────
+  // Joins appeals → posts so we can show the post title, image, and ai_reason
+  // alongside what the user wrote in their appeal.
+  const fetchAppeals = async () => {
+    setLoading(true);
+    try {
+      // Fetch appeals first
+      const { data: appealsData, error } = await supabase
+        .from('appeals')
+        .select('*')
+        .eq('status', 'Pending')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      if (!appealsData || appealsData.length === 0) {
+        setAppeals([]);
+        return;
       }
-    }
+
+      // Manually join posts — avoids relying on FK relationship in Supabase schema
+      const postIds = [...new Set(appealsData.map(a => a.post_id).filter(Boolean))];
+      let postsMap = {};
+      if (postIds.length > 0) {
+        const { data: postsData } = await supabase
+          .from('posts')
+          .select('id, title, desc, image, ai_reason, user, avatar, status')
+          .in('id', postIds);
+        if (postsData) postsData.forEach(p => { postsMap[p.id] = p; });
+      }
+
+      // Attach post data to each appeal
+      const enriched = appealsData.map(a => ({
+        ...a,
+        posts: postsMap[a.post_id] || null,
+      }));
+
+      setAppeals(enriched);
+    } catch (e) { console.error('fetchAppeals error:', e); setAppeals([]); } finally { setLoading(false); }
+  };
+
+  // ─── Existing action handlers ─────────────────────────────────────────────
+  const handleDeletePost = async (postId) => {
+    if (!window.confirm('Delete this post? This cannot be undone.')) return;
+    try {
+      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      if (error) throw error;
+      alert('Post deleted!');
+      fetchPosts(); fetchReports();
+    } catch (e) { alert('Error: ' + e.message); }
   };
 
   const handleApproveReport = async (reportId, postId, reporterName, postTitle, reportReason) => {
-    if (!window.confirm("Approve this report and DELETE the post? An automated message will be sent to the reporter.")) return;
-
-    const autoNote = `Thank you for reporting this post for "${reportReason}". We have reviewed the content, confirmed the violation, and removed the post to keep our community safe.`;
-
+    if (!window.confirm('Approve this report and DELETE the post?')) return;
+    const note = `Thank you for reporting this post for "${reportReason}". We reviewed it, confirmed the violation, and removed the post.`;
     try {
-      await supabase.from('posts').delete().eq('id', postId); 
-      
-      await supabase.from('notifications').insert([{
-        owner_name: reporterName,
-        actor_name: "GreenSort Admin",
-        actor_avatar: "https://ui-avatars.com/api/?name=Admin&background=00C853&color=fff",
-        action: `approved your report. Note: ${autoNote}`,
-        post_title: postTitle
-      }]);
-
-      alert("Post deleted and automated notification sent!");
-      fetchReports(); 
-      fetchPosts();
-    } catch (error) {
-      alert("Error: " + error.message);
-    }
+      await supabase.from('posts').delete().eq('id', postId);
+      await supabase.from('notifications').insert([{ owner_name: reporterName, actor_name: 'GreenSort Admin', actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=2D6A4F&color=fff', action: `approved your report. Note: ${note}`, post_title: postTitle }]);
+      alert('Post deleted and notification sent!');
+      fetchReports(); fetchPosts();
+    } catch (e) { alert('Error: ' + e.message); }
   };
 
   const handleDeclineReport = async (reportId, reporterName, postTitle, reportReason) => {
-    if (!window.confirm("Decline this report? The post will remain active. An automated message will be sent to the reporter.")) return;
-
-    const autoNote = `We have reviewed your report regarding "${reportReason}". After careful review, we determined that this post does not violate our community standards at this time. Thank you for looking out for the community.`;
-
+    if (!window.confirm('Decline this report? Post stays active.')) return;
+    const note = `We reviewed your report on "${reportReason}". This post does not violate our standards at this time.`;
     try {
       await supabase.from('post_reports').update({ status: 'Resolved' }).eq('id', reportId);
-      
-      await supabase.from('notifications').insert([{
-        owner_name: reporterName,
-        actor_name: "GreenSort Admin",
-        actor_avatar: "https://ui-avatars.com/api/?name=Admin&background=FF1744&color=fff",
-        action: `declined your report. Note: ${autoNote}`,
-        post_title: postTitle
-      }]);
-
-      alert("Report dismissed and automated notification sent!");
+      await supabase.from('notifications').insert([{ owner_name: reporterName, actor_name: 'GreenSort Admin', actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff', action: `declined your report. Note: ${note}`, post_title: postTitle }]);
+      alert('Report dismissed and notification sent!');
       fetchReports();
-    } catch (error) {
-      alert("Error: " + error.message);
-    }
+    } catch (e) { alert('Error: ' + e.message); }
   };
 
-  const toggleReason = (id) => {
-    setExpandedReasons(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+  // ─── 🟢 NEW: Appeal action handlers ──────────────────────────────────────
+
+  /**
+   * RESTORE POST
+   * 1. Set posts.status = 'active'   → post reappears in the community feed
+   * 2. Set appeals.status = 'Approved'
+   * 3. Send in-app notification to the user so they know their appeal won
+   */
+  const handleRestorePost = async (appeal) => {
+    const post = appeal.posts;
+    if (!post) return alert('Cannot find the original post. It may have already been deleted.');
+    if (!window.confirm(`Restore "${post.title || 'this post'}" to the public feed?`)) return;
+
+    try {
+      // 1. Restore the post
+      const { error: postError } = await supabase
+        .from('posts')
+        .update({ status: 'active', ai_reason: null })
+        .eq('id', post.id);
+      if (postError) throw postError;
+
+      // 2. Mark appeal as resolved
+      const { error: appealError } = await supabase
+        .from('appeals')
+        .update({ status: 'Approved' })
+        .eq('id', appeal.id);
+      if (appealError) throw appealError;
+
+      // 3. Notify the user
+      await supabase.from('notifications').insert([{
+        owner_name: appeal.user_name,
+        actor_name: 'GreenSort Admin',
+        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=2D6A4F&color=fff',
+        action: 'approved your appeal. Your post has been restored to the community feed.',
+        post_title: post.title || 'Your post',
+        is_read: false,
+      }]);
+
+      alert(`✅ Post restored! "${post.title || 'Post'}" is now live again.`);
+      fetchAppeals();
+    } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  /**
+   * UPHOLD FLAG
+   * 1. Keep posts.status = 'flagged'  → no change to the post
+   * 2. Set appeals.status = 'Rejected'
+   * 3. Send in-app notification explaining the decision
+   */
+  const handleUpholdFlag = async (appeal) => {
+    const post = appeal.posts;
+    if (!window.confirm(`Uphold the AI flag and keep this post hidden?`)) return;
+
+    try {
+      // 1. Mark appeal as rejected
+      const { error: appealError } = await supabase
+        .from('appeals')
+        .update({ status: 'Rejected' })
+        .eq('id', appeal.id);
+      if (appealError) throw appealError;
+
+      // 2. Notify the user
+      await supabase.from('notifications').insert([{
+        owner_name: appeal.user_name,
+        actor_name: 'GreenSort Admin',
+        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
+        action: 'reviewed your appeal and upheld the flag. Your post remains hidden as it violates our community standards.',
+        post_title: post?.title || 'Your post',
+        is_read: false,
+      }]);
+
+      alert('Flag upheld. Post remains hidden and user has been notified.');
+      fetchAppeals();
+    } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  // ─── Shared style helpers (unchanged) ─────────────────────────────────────
+  const cardBase = `rounded-2xl border overflow-hidden transition-all ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.05]'}`;
+  const cardHeader = (color) => `p-4 border-b flex items-start gap-3 ${
+    color === 'red'    ? (isLightMode ? 'bg-red-50 border-red-100'       : 'bg-red-500/5 border-red-500/10') :
+    color === 'yellow' ? (isLightMode ? 'bg-amber-50 border-amber-100'   : 'bg-amber-500/5 border-amber-500/10') :
+    color === 'purple' ? (isLightMode ? 'bg-violet-50 border-violet-100' : 'bg-violet-500/5 border-violet-500/10') :
+    color === 'orange' ? (isLightMode ? 'bg-orange-50 border-orange-100' : 'bg-orange-500/5 border-orange-500/10') :
+    (isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-white/[0.02] border-white/[0.04]')
+  }`;
+  const iconColor  = { red: 'text-red-500', yellow: 'text-amber-500', purple: 'text-violet-500', orange: 'text-orange-500' };
+  const reporterText = { red: isLightMode ? 'text-red-600' : 'text-red-400', yellow: isLightMode ? 'text-amber-700' : 'text-amber-400', purple: isLightMode ? 'text-violet-700' : 'text-violet-400', orange: isLightMode ? 'text-orange-700' : 'text-orange-400' };
+  const reasonText   = { red: isLightMode ? 'text-red-700' : 'text-red-300', yellow: isLightMode ? 'text-amber-800' : 'text-amber-200', purple: isLightMode ? 'text-violet-700' : 'text-violet-200', orange: isLightMode ? 'text-orange-800' : 'text-orange-200' };
+
+  const Avatar = ({ src, name, size = 10 }) => {
+    const initials = (name || '?').substring(0, 2).toUpperCase();
+    return src
+      ? <img src={src} alt={name} className={`w-${size} h-${size} rounded-full object-cover border ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/[0.07]'}`} />
+      : <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${t.iconBg1}`}>{initials}</div>;
+  };
+
+  // 🟢 Appeals count added to tab list
+  const tabs = [
+    { key: 'all_posts',          label: 'All Posts',          count: 0 },
+    { key: 'reports',            label: 'Reported Posts',     count: reports.length },
+    { key: 'reported_comments',  label: 'Reported Comments',  count: commentReports.length },
+    { key: 'reported_users',     label: 'Reported Person',    count: userReports.length },
+    { key: 'appeals',            label: 'Appeals',            count: appeals.length },
+  ];
+
+  const badgeCount = (n) => n > 0
+    ? <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isLightMode ? 'bg-red-100 text-red-600' : 'bg-red-500/15 text-red-400'}`}>{n}</span>
+    : null;
+
+  const refreshCurrentTab = () => {
+    if (activeTab === 'all_posts')         fetchPosts();
+    else if (activeTab === 'reports')      fetchReports();
+    else if (activeTab === 'reported_comments') fetchCommentReports();
+    else if (activeTab === 'reported_users')    fetchUserReports();
+    else if (activeTab === 'appeals')      fetchAppeals();
   };
 
   return (
-    <div className="flex h-screen w-full font-sans bg-[#020C14] text-gray-100 relative overflow-hidden">
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-orange-500/20 rounded-full blur-[120px] opacity-30 pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-[#00C853]/20 rounded-full blur-[120px] opacity-20 pointer-events-none"></div>
-
+    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar />
 
-      <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
-        <div className="p-8 lg:p-12 max-w-[1600px] mx-auto">
-          
-          <div className="mb-10 relative">
-            <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-wide uppercase">CONTENT MODERATION</h2>
-            <p className="text-gray-400 mt-2 tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_10px_#f97316]"></span>
-                Monitor community posts and user reports
-            </p>
-            <div className="absolute bottom-[-10px] left-0 w-32 h-1 bg-gradient-to-r from-orange-500 to-transparent rounded-full"></div>
+      <div className="flex-1 h-full overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+        <div className="p-6 lg:p-8 max-w-[1500px] mx-auto">
+
+          {/* Header */}
+          <div className="mb-7">
+            <h1 className={`text-2xl font-bold ${t.textMain}`}>Content Moderation</h1>
+            <p className={`${t.textMuted} mt-1 text-sm`}>Monitor community posts and user reports</p>
           </div>
 
-          {/* 🟢 UPDATED TABS NAVIGATION */}
-          <div className="flex flex-wrap gap-2 items-center bg-white/5 backdrop-blur-md border border-white/10 rounded-full p-1 mb-8 w-fit shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
-            <button onClick={() => setActiveTab('all_posts')} className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold text-sm transition-all duration-300 ${activeTab === 'all_posts' ? 'bg-[#0A1A2F] text-white border border-orange-500/50 shadow-[inset_0_0_15px_rgba(249,115,22,0.3)]' : 'text-gray-400 hover:text-white'}`}>
-                All Posts
-            </button>
-            <button onClick={() => setActiveTab('reports')} className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold text-sm transition-all duration-300 ${activeTab === 'reports' ? 'bg-[#0A1A2F] text-white border border-red-500/50 shadow-[inset_0_0_15px_rgba(239,68,68,0.3)]' : 'text-gray-400 hover:text-white'}`}>
-                Reported Posts
-                {reports.length > 0 && <span className="bg-red-500/20 text-red-400 border border-red-500/50 px-2 py-0.5 rounded-full text-xs">{reports.length}</span>}
-            </button>
-            <button onClick={() => setActiveTab('reported_comments')} className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold text-sm transition-all duration-300 ${activeTab === 'reported_comments' ? 'bg-[#0A1A2F] text-white border border-yellow-500/50 shadow-[inset_0_0_15px_rgba(234,179,8,0.3)]' : 'text-gray-400 hover:text-white'}`}>
-                Reported Comments
-                {commentReports.length > 0 && <span className="bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 px-2 py-0.5 rounded-full text-xs">{commentReports.length}</span>}
-            </button>
-            <button onClick={() => setActiveTab('reported_users')} className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold text-sm transition-all duration-300 ${activeTab === 'reported_users' ? 'bg-[#0A1A2F] text-white border border-purple-500/50 shadow-[inset_0_0_15px_rgba(168,85,247,0.3)]' : 'text-gray-400 hover:text-white'}`}>
-                Reported Person
-                {userReports.length > 0 && <span className="bg-purple-500/20 text-purple-400 border border-purple-500/50 px-2 py-0.5 rounded-full text-xs">{userReports.length}</span>}
-            </button>
-          </div>
-
-          <div className="w-full">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-white tracking-wider">
-                {activeTab === 'all_posts' ? 'Community Feed' : 
-                 activeTab === 'reports' ? 'Pending Post Reports' : 
-                 activeTab === 'reported_comments' ? 'Pending Comment Reports' : 'Pending User Reports'}
-              </h2>
-              <button 
-                onClick={() => {
-                  if (activeTab === 'all_posts') fetchPosts();
-                  else if (activeTab === 'reports') fetchReports();
-                  else if (activeTab === 'reported_comments') fetchCommentReports();
-                  else if (activeTab === 'reported_users') fetchUserReports();
-                }} 
-                className="text-sm font-semibold text-orange-400 hover:text-white transition-colors bg-orange-500/10 px-4 py-2 rounded-lg border border-orange-500/30"
+          {/* Tabs */}
+          <div className={`flex flex-wrap gap-1 p-1 rounded-2xl border w-fit mb-7 ${isLightMode ? 'bg-[#F0F4EE] border-[#E3E8E1]' : 'bg-[#111814] border-white/[0.05]'}`}>
+            {tabs.map(tab => (
+              <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all duration-200 ${
+                  activeTab === tab.key
+                    ? (isLightMode ? 'bg-white text-[#2D6A4F] shadow-sm font-semibold' : 'bg-[#1C2620] text-[#52B788] border border-[#52B788]/20 font-semibold')
+                    : `${t.textMuted} hover:${t.textMain} font-medium`
+                }`}
               >
-                ↻ Refresh
+                {tab.label}
+                {badgeCount(tab.count)}
               </button>
+            ))}
+          </div>
+
+          {/* Top bar */}
+          <div className="flex justify-between items-center mb-5">
+            <h2 className={`text-base font-semibold ${t.textMain}`}>
+              {activeTab === 'all_posts'         ? 'Community Feed' :
+               activeTab === 'reports'           ? 'Pending Post Reports' :
+               activeTab === 'reported_comments' ? 'Pending Comment Reports' :
+               activeTab === 'reported_users'    ? 'Pending User Reports' :
+               'Pending Post Appeals'}
+            </h2>
+            <button
+              onClick={refreshCurrentTab}
+              className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${t.accentText} ${isLightMode ? 'border-[#A8CFBA] bg-[#D8EDDF] hover:bg-[#C4E0CF]' : 'border-[#52B788]/25 bg-[#52B788]/8 hover:bg-[#52B788]/15'}`}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              Refresh
+            </button>
+          </div>
+
+          {loading ? (
+            <div className={`flex items-center justify-center h-48 rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.05]'}`}>
+              <p className={`text-sm font-medium animate-pulse ${t.accentText}`}>Loading data…</p>
             </div>
-
-            {loading ? (
-              <div className="p-10 text-center text-orange-400 animate-pulse font-mono tracking-widest bg-white/5 rounded-2xl border border-white/10">FETCHING DATA...</div>
-            ) : (
-              <>
-                {/* 🟢 TAB 1: ALL POSTS */}
-                {activeTab === 'all_posts' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
-                    {posts.length === 0 ? (
-                      <div className="col-span-full p-10 text-center text-gray-500 font-mono bg-white/5 rounded-xl border border-white/10">No posts found.</div>
-                    ) : (
-                      posts.map((post) => (
-                        <div key={post.id} className="bg-[#111C2A] border border-[#1A2C42] rounded-2xl overflow-hidden hover:shadow-[0_0_20px_rgba(0,200,83,0.15)] transition-all flex flex-col h-full group relative">
-                          
-                          <div className="p-5 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              {post.display_avatar ? (
-                                <img src={post.display_avatar} alt="Avatar" className="w-12 h-12 rounded-full border border-[#00C853]/50 object-cover shadow-[0_0_10px_rgba(0,200,83,0.2)]" />
-                              ) : (
-                                <div className="w-12 h-12 rounded-full bg-[#00C853]/20 border border-[#00C853]/50 flex items-center justify-center text-[#00C853] font-black text-md shadow-[0_0_10px_rgba(0,200,83,0.2)]">
-                                  {post.display_initials}
-                                </div>
-                              )}
-                              <div>
-                                <p className="font-bold text-white text-md tracking-wide max-w-[150px] truncate" title={post.display_name}>{post.display_name}</p>
-                                <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                  {timeAgo(post.created_at)}
-                                </p>
-                              </div>
+          ) : (
+            <>
+              {/* TAB 1: ALL POSTS */}
+              {activeTab === 'all_posts' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {posts.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No posts found.</div>
+                    : posts.map(post => (
+                      <div key={post.id} className={`${cardBase} flex flex-col hover:shadow-md transition-shadow`}>
+                        <div className={`p-4 flex items-center justify-between ${isLightMode ? 'border-b border-[#EDF0EB]' : 'border-b border-white/[0.04]'}`}>
+                          <div className="flex items-center gap-3">
+                            {post.display_avatar
+                              ? <img src={post.display_avatar} alt="avatar" className="w-9 h-9 rounded-full object-cover border border-[#E3E8E1]" />
+                              : <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>{post.display_initials}</div>
+                            }
+                            <div>
+                              <p className={`text-sm font-semibold ${t.textMain} max-w-[160px] truncate`}>{post.display_name}</p>
+                              <p className={`text-[11px] ${t.textMuted}`}>{timeAgo(post.created_at)}</p>
                             </div>
-                            {post.type && <span className="bg-blue-500/20 text-blue-300 text-[10px] px-2 py-1 rounded-md border border-blue-500/30 font-bold uppercase">{post.type}</span>}
                           </div>
+                          {post.type && <span className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase ${isLightMode ? 'bg-[#DDE9F5] text-[#2A5FA8]' : 'bg-[#4A9ECC]/10 text-[#4A9ECC]'}`}>{post.type}</span>}
+                        </div>
 
-                          <div className="px-5 pb-4 flex-1">
-                            {post.title && <h3 className="font-bold text-white text-xl mb-2 leading-tight">{post.title}</h3>}
-                            <p className="text-gray-300 text-sm leading-relaxed mb-4">{post.display_text}</p>
+                        <div className="p-4 flex-1">
+                          {post.title && <h3 className={`font-semibold ${t.textMain} text-sm mb-1.5 leading-snug`}>{post.title}</h3>}
+                          <p className={`text-sm ${t.textMuted} leading-relaxed line-clamp-3`}>{post.display_text}</p>
+                        </div>
+
+                        {post.display_image && (
+                          <div className={`w-full h-52 flex items-center justify-center overflow-hidden border-t border-b ${isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'}`}>
+                            <img src={post.display_image} alt="Post" className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-90 transition-opacity" onClick={() => setViewImage(post.display_image)} onError={e => { e.target.style.display = 'none'; }} />
                           </div>
+                        )}
 
-                          {post.display_image && (
-                            <div className="w-full h-64 bg-[#050B14] flex items-center justify-center overflow-hidden border-t border-b border-[#1A2C42]">
-                              <img 
-                                src={post.display_image} 
-                                alt="Post" 
-                                className="max-w-full max-h-full object-contain cursor-zoom-in hover:scale-105 transition-transform duration-500" 
-                                onClick={() => setViewImage(post.display_image)}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
+                        <div className={`p-3 flex items-center justify-between ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.015]'}`}>
+                          <div className={`flex gap-3 text-[11px] ${t.textMuted}`}>
+                            {post.location && <span className="flex items-center gap-1">{post.location}</span>}
+                            {post.price && post.price !== '0' && <span className={`font-semibold ${t.accentText}`}>{post.price}</span>}
+                          </div>
+                          <button onClick={() => handleDeletePost(post.id)} className={`p-1.5 rounded-lg transition-all ${t.textMuted} hover:text-red-500 hover:bg-red-500/10`}>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+              )}
+
+              {/* TAB 2: REPORTED POSTS */}
+              {activeTab === 'reports' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {reports.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No pending reports. All clear!</div>
+                    : reports.map(report => {
+                      const post = report.posts;
+                      if (!post) return null;
+                      const isLong = report.reason && report.reason.length > 80;
+                      return (
+                        <div key={report.id} className={`${cardBase} flex flex-col border-red-200/60 ${isLightMode ? '' : '!border-red-500/20'}`}>
+                          <div className={cardHeader('red')}>
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.red}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.red} mb-1`}>Reported by: {report.reporter_email}</p>
+                              <p className={`text-xs leading-relaxed ${reasonText.red}`}>
+                                {isLong ? (<>{report.reason.substring(0, 80)}… <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">See more</button></>) : report.reason}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="p-4 flex items-center gap-3">
+                            {post.avatar ? <img src={post.avatar} alt="a" className="w-8 h-8 rounded-full object-cover" /> : <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>{(post.user || '?').substring(0, 2).toUpperCase()}</div>}
+                            <div>
+                              <p className={`text-sm font-semibold ${t.textSub}`}>{post.user}</p>
+                              <p className={`text-[11px] ${t.textMuted}`}>Posted {timeAgo(post.created_at)}</p>
+                            </div>
+                          </div>
+                          <div className="px-4 pb-3 flex-1">
+                            {post.title && <p className={`font-semibold ${t.textMain} text-sm mb-1`}>{post.title}</p>}
+                            <p className={`text-xs ${t.textMuted} line-clamp-2`}>{post.desc || 'No content.'}</p>
+                          </div>
+                          {post.image && (
+                            <div className={`w-full h-44 flex items-center justify-center overflow-hidden border-t border-b ${isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'}`}>
+                              <img src={post.image} alt="Report" className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-80 transition-opacity" onClick={() => setViewImage(post.image)} onError={e => { e.target.style.display = 'none'; }} />
                             </div>
                           )}
-
-                          <div className="p-4 bg-[#0D1623] flex items-center justify-between mt-auto">
-                            <div className="flex gap-3 text-xs text-gray-400 font-medium">
-                              {post.location && (
-                                <span className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer">
-                                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                  {post.location}
-                                </span>
-                              )}
-                              {post.price && post.price !== '0' && <span className="flex items-center gap-1 text-[#00C853] font-bold">{post.price}</span>}
-                            </div>
-                            
-                            <button onClick={() => handleDeletePost(post.id)} className="text-gray-500 hover:text-red-500 hover:bg-red-500/10 p-2 rounded-lg transition-all" title="Delete Post">
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FDF8F8]' : 'bg-red-500/[0.03]'}`}>
+                            <button onClick={() => handleApproveReport(report.id, report.post_id, report.reporter_email, post.title, report.reason)}
+                              className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-red-500 hover:bg-red-400">
+                              Approve Report & Delete Post
+                            </button>
+                            <button onClick={() => handleDeclineReport(report.id, report.reporter_email, post.title, report.reason)}
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>
+                              Decline Report & Keep Post
                             </button>
                           </div>
                         </div>
-                      ))
-                    )}
-                  </div>
-                )}
+                      );
+                    })
+                  }
+                </div>
+              )}
 
-                {/* 🔴 TAB 2: REPORTED POSTS */}
-                {activeTab === 'reports' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
-                    {reports.length === 0 ? (
-                      <div className="col-span-full p-10 text-center text-gray-500 font-mono bg-white/5 rounded-xl border border-white/10">No pending reports. All clear!</div>
-                    ) : (
-                      reports.map((report) => {
-                        const post = report.posts; 
-                        if (!post) return null; 
-
-                        const isLongReason = report.reason && report.reason.length > 80;
-
-                        return (
-                          <div key={report.id} className="bg-[#111C2A] border-2 border-red-500/50 rounded-2xl overflow-hidden hover:shadow-[0_0_20px_rgba(239,68,68,0.2)] transition-all flex flex-col h-full relative shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
-                            
-                            <div className="bg-red-500/10 p-4 border-b border-red-500/30">
-                              <div className="flex items-center gap-2 mb-2">
-                                <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                <p className="text-xs text-red-400 font-bold uppercase tracking-wider">Reported by: {report.reporter_email}</p>
-                              </div>
-                              <div className="text-sm text-red-200 font-medium leading-snug break-words">
-                                {isLongReason ? (
-                                  <div className="flex flex-col gap-2 mt-1">
-                                    <p>{report.reason.substring(0, 80)}...</p>
-                                    <button onClick={() => setSelectedReportDetails(report)} className="self-start inline-flex items-center bg-red-500/20 hover:bg-red-500/40 text-red-300 px-3 py-1.5 rounded-md transition-colors text-[10px] uppercase tracking-wider font-bold border border-red-500/30">
-                                      View Full Reason
-                                    </button>
-                                  </div>
-                                ) : (
-                                  report.reason
-                                )}
-                              </div>
+              {/* TAB 3: REPORTED COMMENTS */}
+              {activeTab === 'reported_comments' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {commentReports.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No pending comment reports.</div>
+                    : commentReports.map(report => {
+                      const comment = report.comments;
+                      if (!comment) return null;
+                      const isLong = report.reason && report.reason.length > 80;
+                      return (
+                        <div key={report.id} className={`${cardBase} flex flex-col border-amber-200/60 ${isLightMode ? '' : '!border-amber-500/20'}`}>
+                          <div className={cardHeader('yellow')}>
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.yellow}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.yellow} mb-1`}>Reported by: {report.reporter_email}</p>
+                              <p className={`text-xs leading-relaxed ${reasonText.yellow}`}>
+                                {isLong ? (<>{report.reason.substring(0, 80)}… <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">See more</button></>) : report.reason}
+                              </p>
                             </div>
-
-                            <div className="p-5 flex items-center justify-between opacity-90">
-                              <div className="flex items-center gap-3">
-                                {post.avatar ? (
-                                  <img src={post.avatar} alt="Avatar" className="w-10 h-10 rounded-full border border-gray-600 object-cover" />
-                                ) : (
-                                  <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-white font-black text-xs">
-                                    {post.user?.substring(0, 2).toUpperCase() || '?'}
-                                  </div>
-                                )}
-                                <div>
-                                  <p className="font-bold text-gray-300 text-sm tracking-wide max-w-[150px] truncate">{post.user}</p>
-                                  <p className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">Posted {timeAgo(post.created_at)}</p>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="px-5 pb-4 flex-1 opacity-90">
-                              {post.title && <h3 className="font-bold text-white text-lg mb-1 leading-tight">{post.title}</h3>}
-                              <p className="text-gray-400 text-xs leading-relaxed mb-3 line-clamp-3">{post.desc || "No text content provided."}</p>
-                            </div>
-
-                            {post.image && (
-                              <div className="w-full h-64 bg-[#050B14] flex items-center justify-center overflow-hidden border-t border-b border-[#1A2C42]">
-                                <img src={post.image} alt="Report" className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-80 transition-all duration-300 hover:scale-105" onClick={() => setViewImage(post.image)} onError={(e) => { e.target.style.display = 'none'; }} />
-                              </div>
-                            )}
-
-                            <div className="p-4 bg-[#0D1623] flex flex-col gap-2 border-t border-[#1A2C42] mt-auto">
-                              <button onClick={() => handleApproveReport(report.id, report.post_id, report.reporter_email, post.title, report.reason)} className="w-full flex items-center justify-center gap-2 text-white bg-red-500/80 hover:bg-red-500 py-2.5 rounded-lg text-sm transition-all font-bold shadow-[0_0_10px_rgba(239,68,68,0.4)]">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                Approve Report & Delete Post
-                              </button>
-                              <button onClick={() => handleDeclineReport(report.id, report.reporter_email, post.title, report.reason)} className="w-full text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 py-2.5 rounded-lg text-sm transition-all font-medium border border-white/10">
-                                Decline Report & Keep Post
-                              </button>
-                            </div>
-
                           </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-
-                {/* 🟡 TAB 3: REPORTED COMMENTS */}
-                {activeTab === 'reported_comments' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
-                    {commentReports.length === 0 ? (
-                      <div className="col-span-full p-10 text-center text-gray-500 font-mono bg-white/5 rounded-xl border border-white/10">No pending comment reports.</div>
-                    ) : (
-                      commentReports.map((report) => {
-                        const comment = report.comments; 
-                        if (!comment) return null; 
-
-                        const isLongReason = report.reason && report.reason.length > 80;
-
-                        return (
-                          <div key={report.id} className="bg-[#111C2A] border-2 border-yellow-500/50 rounded-2xl overflow-hidden hover:shadow-[0_0_20px_rgba(234,179,8,0.2)] transition-all flex flex-col h-full relative shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
-                            
-                            <div className="bg-yellow-500/10 p-4 border-b border-yellow-500/30">
-                              <div className="flex items-center gap-2 mb-2">
-                                <svg className="w-4 h-4 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                <p className="text-xs text-yellow-400 font-bold uppercase tracking-wider">Reported by: {report.reporter_email}</p>
-                              </div>
-                              <div className="text-sm text-yellow-200 font-medium leading-snug break-words">
-                                {isLongReason ? (
-                                  <div className="flex flex-col gap-2 mt-1">
-                                    <p>{report.reason.substring(0, 80)}...</p>
-                                    <button onClick={() => setSelectedReportDetails(report)} className="self-start inline-flex items-center bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-300 px-3 py-1.5 rounded-md transition-colors text-[10px] uppercase tracking-wider font-bold border border-yellow-500/30">
-                                      View Full Reason
-                                    </button>
-                                  </div>
-                                ) : (
-                                  report.reason
-                                )}
+                          <div className={`m-4 p-4 rounded-xl border ${isLightMode ? 'bg-[#FAFBF9] border-[#EDF0EB]' : 'bg-white/[0.02] border-white/[0.04]'}`}>
+                            <div className="flex items-center gap-2.5 mb-3">
+                              {comment.avatar ? <img src={comment.avatar} alt="a" className="w-7 h-7 rounded-full object-cover" /> : <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${t.iconBg1}`}>{(comment.user_name || '?').substring(0, 2).toUpperCase()}</div>}
+                              <div>
+                                <p className={`text-xs font-semibold ${t.textMain}`}>{comment.user_name}</p>
+                                <p className={`text-[10px] ${t.textMuted}`}>{timeAgo(comment.created_at)}</p>
                               </div>
                             </div>
+                            <p className={`text-xs ${t.textMuted} leading-relaxed border-l-2 pl-3 italic ${isLightMode ? 'border-amber-300' : 'border-amber-500/40'}`}>"{comment.text}"</p>
+                          </div>
+                          <div className="flex-1" />
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FFFBF4]' : 'bg-amber-500/[0.03]'}`}>
+                            <button
+                              onClick={() => handleDeleteComment(report)}
+                              className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-amber-500 hover:bg-amber-400"
+                            >
+                              Delete Comment
+                            </button>
+                            <button
+                              onClick={() => handleDismissCommentReport(report)}
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
+                            >
+                              Dismiss Report
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
 
-                            <div className="p-5 flex-1 opacity-90 bg-black/20 m-4 rounded-xl border border-white/5">
-                              <div className="flex items-center gap-3 mb-3">
-                                {comment.avatar ? (
-                                  <img src={comment.avatar} alt="Avatar" className="w-8 h-8 rounded-full border border-gray-600 object-cover" />
-                                ) : (
-                                  <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-white font-black text-xs">
-                                    {comment.user_name?.substring(0, 2).toUpperCase() || '?'}
-                                  </div>
-                                )}
-                                <div>
-                                  <p className="font-bold text-gray-300 text-sm">{comment.user_name}</p>
-                                  <p className="text-[10px] text-gray-500">{timeAgo(comment.created_at)}</p>
-                                </div>
-                              </div>
-                              <p className="text-gray-300 text-sm leading-relaxed border-l-2 border-yellow-500/50 pl-3 italic">
-                                "{comment.text}"
+              {/* TAB 4: REPORTED USERS */}
+              {activeTab === 'reported_users' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {userReports.length === 0
+                    ? <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>No pending user reports.</div>
+                    : userReports.map(report => {
+                      const isLong = report.reason && report.reason.length > 80;
+                      return (
+                        <div key={report.id} className={`${cardBase} flex flex-col border-violet-200/60 ${isLightMode ? '' : '!border-violet-500/20'}`}>
+                          <div className={cardHeader('purple')}>
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.purple}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.purple} mb-1`}>Reported by: {report.reporter_email}</p>
+                              <p className={`text-xs leading-relaxed ${reasonText.purple}`}>
+                                {isLong ? (<>{report.reason.substring(0, 80)}… <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">See more</button></>) : report.reason}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex-1 flex flex-col items-center justify-center py-10 gap-3">
+                            {report.reported_avatar
+                              ? <img src={report.reported_avatar} alt="User" className={`w-20 h-20 rounded-full object-cover border-4 ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/[0.07]'}`} />
+                              : <div className={`w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold ${t.iconBg1}`}>{(report.reported_user || 'U').substring(0, 2).toUpperCase()}</div>
+                            }
+                            <div className="text-center">
+                              <h3 className={`font-semibold ${t.textMain} text-base`}>{report.reported_user || 'Unknown User'}</h3>
+                              <p className={`text-xs ${t.textMuted} mt-0.5`}>Reported Account</p>
+                            </div>
+                          </div>
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FAF8FF]' : 'bg-violet-500/[0.03]'}`}>
+                            <button
+                              onClick={() => setBanModal({ report })}
+                              className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-violet-600 hover:bg-violet-500"
+                            >
+                              Ban / Warn User
+                            </button>
+                            <button
+                              onClick={() => handleDismissUserReport(report)}
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
+                            >
+                              Dismiss Report
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+
+              {/* ─────────────────────────────────────────────────────────────
+                  TAB 5: APPEALS  🟢 NEW
+                  Shows every pending appeal submitted via the mobile app.
+                  Each card contains:
+                    • Who appealed  (user_name from appeals table)
+                    • The original post  (joined via posts FK)
+                    • The AI flag reason  (ai_reason stored on the post)
+                    • The user's own explanation  (reason from appeals table)
+                  Actions:
+                    • Restore Post   → sets posts.status = 'active'
+                    • Uphold Flag    → keeps post flagged, notifies user
+              ───────────────────────────────────────────────────────────── */}
+              {activeTab === 'appeals' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {appeals.length === 0 ? (
+                    <div className={`col-span-full p-10 text-center rounded-2xl border ${isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'} text-sm italic`}>
+                      No pending appeals. All clear!
+                    </div>
+                  ) : (
+                    appeals.map(appeal => {
+                      const post = appeal.posts;
+                      // post might be null if it was already hard-deleted
+                      const postTitle   = post?.title   || '(Post was deleted)';
+                      const postImage   = post?.image   ? post.image.split(',')[0] : null;
+                      const aiReason    = post?.ai_reason || 'No AI reason recorded.';
+                      const isPostGone  = !post;
+
+                      return (
+                        <div
+                          key={appeal.id}
+                          className={`${cardBase} flex flex-col border-orange-200/60 ${isLightMode ? '' : '!border-orange-500/20'}`}
+                        >
+                          {/* ── Card header: Appeal metadata ── */}
+                          <div className={cardHeader('orange')}>
+                            {/* Appeal icon */}
+                            <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.orange}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                            </svg>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.orange} mb-1`}>
+                                Appeal by: <span className="normal-case">{appeal.user_name}</span>
+                              </p>
+                              <p className={`text-[11px] ${t.textMuted}`}>{timeAgo(appeal.created_at)}</p>
+                            </div>
+                          </div>
+
+                          {/* ── Post snapshot ── */}
+                          <div className="p-4 flex-1 space-y-3">
+
+                            {/* Post title */}
+                            <div>
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${t.textMuted} mb-1`}>Post Title</p>
+                              <p className={`text-sm font-semibold ${isPostGone ? 'text-red-400 italic' : t.textMain} leading-snug`}>
+                                {postTitle}
                               </p>
                             </div>
 
-                            <div className="p-4 bg-[#0D1623] flex flex-col gap-2 border-t border-[#1A2C42] mt-auto">
-                              <button onClick={() => alert('Add Delete Comment Logic here!')} className="w-full flex items-center justify-center gap-2 text-black bg-yellow-500 hover:bg-yellow-400 py-2.5 rounded-lg text-sm transition-all font-bold shadow-[0_0_10px_rgba(234,179,8,0.4)]">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                Delete Comment
-                              </button>
-                              <button onClick={() => alert('Add Decline Comment Logic here!')} className="w-full text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 py-2.5 rounded-lg text-sm transition-all font-medium border border-white/10">
-                                Dismiss Report
-                              </button>
+                            {/* Post thumbnail (first image only) */}
+                            {postImage && !isPostGone && (
+                              <div
+                                className={`w-full h-36 rounded-xl overflow-hidden border cursor-zoom-in ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'}`}
+                                onClick={() => setViewImage(postImage)}
+                              >
+                                <img
+                                  src={postImage}
+                                  alt="Post"
+                                  className="w-full h-full object-cover hover:opacity-90 transition-opacity"
+                                  onError={e => { e.target.style.display = 'none'; }}
+                                />
+                              </div>
+                            )}
+
+                            {/* AI flag reason — shown in a distinct red bubble */}
+                            <div className={`rounded-xl p-3 border ${isLightMode ? 'bg-red-50 border-red-100' : 'bg-red-500/5 border-red-500/10'}`}>
+                              <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${isLightMode ? 'text-red-600' : 'text-red-400'}`}>
+                                ⚠ AI Flag Reason
+                              </p>
+                              <p className={`text-xs leading-relaxed ${isLightMode ? 'text-red-700' : 'text-red-300'}`}>
+                                {aiReason}
+                              </p>
+                            </div>
+
+                            {/* User's own appeal explanation */}
+                            <div className={`rounded-xl p-3 border ${isLightMode ? 'bg-orange-50 border-orange-100' : 'bg-orange-500/5 border-orange-500/10'}`}>
+                              <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${reporterText.orange}`}>
+                                User's Explanation
+                              </p>
+                              <p className={`text-xs leading-relaxed ${reasonText.orange} italic`}>
+                                "{appeal.reason || 'No explanation provided.'}"
+                              </p>
                             </div>
                           </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
 
-                {/* 🟣 TAB 4: REPORTED USERS (MESSAGING) */}
-                {activeTab === 'reported_users' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-stretch">
-                    {userReports.length === 0 ? (
-                      <div className="col-span-full p-10 text-center text-gray-500 font-mono bg-white/5 rounded-xl border border-white/10">No pending user reports.</div>
-                    ) : (
-                      userReports.map((report) => {
-                        const isLongReason = report.reason && report.reason.length > 80;
-
-                        return (
-                          <div key={report.id} className="bg-[#111C2A] border-2 border-purple-500/50 rounded-2xl overflow-hidden hover:shadow-[0_0_20px_rgba(168,85,247,0.2)] transition-all flex flex-col h-full relative shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
-                            
-                            <div className="bg-purple-500/10 p-4 border-b border-purple-500/30">
-                              <div className="flex items-center gap-2 mb-2">
-                                <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                <p className="text-xs text-purple-400 font-bold uppercase tracking-wider">Reported by: {report.reporter_email}</p>
+                          {/* ── Action buttons ── */}
+                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FFFAF5]' : 'bg-orange-500/[0.03]'}`}>
+                            {isPostGone ? (
+                              /* Post was already deleted — nothing to restore */
+                              <div className={`w-full py-3 rounded-xl text-xs font-medium text-center ${isLightMode ? 'bg-[#F4F6F2] text-[#7A8C77]' : 'bg-white/[0.04] text-[#627A5C]'}`}>
+                                Original post no longer exists
                               </div>
-                              <div className="text-sm text-purple-200 font-medium leading-snug break-words">
-                                {isLongReason ? (
-                                  <div className="flex flex-col gap-2 mt-1">
-                                    <p>{report.reason.substring(0, 80)}...</p>
-                                    <button onClick={() => setSelectedReportDetails(report)} className="self-start inline-flex items-center bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 px-3 py-1.5 rounded-md transition-colors text-[10px] uppercase tracking-wider font-bold border border-purple-500/30">
-                                      View Full Reason
-                                    </button>
-                                  </div>
-                                ) : (
-                                  report.reason
-                                )}
-                              </div>
-                            </div>
+                            ) : (
+                              <>
+                                {/* RESTORE */}
+                                <button
+                                  onClick={() => handleRestorePost(appeal)}
+                                  className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-emerald-600 hover:bg-emerald-500 flex items-center justify-center gap-2"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  Restore Post
+                                </button>
 
-                            <div className="p-8 flex-1 flex flex-col items-center justify-center opacity-90 text-center">
-                                {/* 🟢 IPAPAKITA NA ANG PICTURE KUNG MERON */}
-                                {report.reported_avatar ? (
-                                  <img 
-                                    src={report.reported_avatar} 
-                                    alt="User Avatar" 
-                                    className="w-20 h-20 rounded-full object-cover mb-4 border-4 border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.3)]" 
-                                  />
-                                ) : (
-                                  <div className="w-20 h-20 rounded-full bg-gray-600 flex items-center justify-center text-white font-black text-2xl mb-4 border-4 border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.3)]">
-                                    {report.reported_user?.substring(0, 2).toUpperCase() || 'U'}
-                                  </div>
-                                )}
-                                
-                                <h3 className="font-bold text-white text-xl">{report.reported_user || 'Unknown User'}</h3>
-                                <p className="text-gray-400 text-xs mt-1">Reported User Account</p>
-                            </div>
-
-                            <div className="p-4 bg-[#0D1623] flex flex-col gap-2 border-t border-[#1A2C42] mt-auto">
-                              <button onClick={() => alert('Add Ban User Logic here!')} className="w-full flex items-center justify-center gap-2 text-white bg-purple-600 hover:bg-purple-500 py-2.5 rounded-lg text-sm transition-all font-bold shadow-[0_0_10px_rgba(168,85,247,0.4)]">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
-                                Ban / Warn User
-                              </button>
-                              <button onClick={() => alert('Add Dismiss User Report Logic here!')} className="w-full text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 py-2.5 rounded-lg text-sm transition-all font-medium border border-white/10">
-                                Dismiss Report
-                              </button>
-                            </div>
+                                {/* UPHOLD */}
+                                <button
+                                  onClick={() => handleUpholdFlag(appeal)}
+                                  className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                  </svg>
+                                  Uphold Flag (Keep Hidden)
+                                </button>
+                              </>
+                            )}
                           </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </>
+          )}
 
-              </>
-            )}
-          </div>
-          <div className="h-12"></div>
+          <div className="h-12" />
         </div>
       </div>
 
-      {/* 🟢 MODAL PARA SA MAHABANG TEXT REASON ONLY */}
-      {selectedReportDetails && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={() => setSelectedReportDetails(null)}>
-          <div className="bg-[#111C2A] border border-red-500/50 rounded-2xl p-6 max-w-lg w-full shadow-[0_0_30px_rgba(239,68,68,0.3)]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-              <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              Full Report Details
-            </h3>
-            
-            <p className="text-xs text-gray-400 mb-2 uppercase tracking-wider">Reported by: {selectedReportDetails.reporter_email}</p>
-            
-            <div className="max-h-[60vh] overflow-y-auto no-scrollbar mb-6 p-4 bg-white/5 rounded-xl border border-white/10">
-              <p className="text-red-200 leading-relaxed whitespace-pre-wrap break-words text-sm">
-                {selectedReportDetails.reason}
-              </p>
+      {/* ── Ban / Warn User Modal ── */}
+      {banModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBanModal(null)}>
+          <div
+            className={`w-full max-w-sm rounded-2xl border shadow-2xl ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.07]'}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className={`p-5 border-b ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className={`text-sm font-bold ${t.textMain}`}>Take Action on User</h3>
+                  <p className={`text-[11px] font-medium ${t.textMuted} mt-0.5`}>{banModal.report.reported_user}</p>
+                </div>
+              </div>
             </div>
-            
-            <button 
-              onClick={() => setSelectedReportDetails(null)}
-              className="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 rounded-xl transition-all border border-white/10"
-            >
-              Close
-            </button>
+            <div className="p-5 space-y-3">
+              {/* Reported by + reason recap */}
+              <div className={`p-3 rounded-xl border text-xs ${isLightMode ? 'bg-[#F7F9F6] border-[#E3E8E1]' : 'bg-white/[0.02] border-white/[0.05]'}`}>
+                <p className={`font-semibold ${t.textMuted} mb-1`}>Reported by: {banModal.report.reporter_email}</p>
+                <p className={`${t.textSub} leading-relaxed`}>{banModal.report.reason}</p>
+              </div>
+              {/* Ban button */}
+              <button
+                onClick={() => handleBanUser(banModal.report, 'ban')}
+                className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-400 transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+                Ban User (set status = Banned)
+              </button>
+              {/* Warn button */}
+              <button
+                onClick={() => handleBanUser(banModal.report, 'warn')}
+                className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-400 transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Issue Warning Only (no ban)
+              </button>
+              {/* Cancel */}
+              <button
+                onClick={() => setBanModal(null)}
+                className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                  isLightMode ? 'border-[#E3E8E1] text-[#7A8C77] hover:bg-[#F3F6F1]' : 'border-white/[0.07] text-[#627A5C] hover:bg-white/[0.04]'
+                }`}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* 🟢 FULLSCREEN IMAGE VIEWER MODAL */}
-      {viewImage && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-zoom-out animate-fadeIn" onClick={() => setViewImage(null)}>
-          <button className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors bg-black/50 p-2 rounded-full shadow-lg" onClick={() => setViewImage(null)} title="Close image">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-          <img src={viewImage} alt="Enlarged view" className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.8)]" onClick={(e) => e.stopPropagation()} />
+      {/* Full Reason Modal (shared by all tabs) */}
+      {selectedReportDetails && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedReportDetails(null)}>
+          <div className={`w-full max-w-lg rounded-2xl border shadow-2xl ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.07]'}`} onClick={e => e.stopPropagation()}>
+            <div className={`p-5 border-b ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'} flex items-center justify-between`}>
+              <h3 className={`font-semibold ${t.textMain}`}>Full Report Details</h3>
+              <button onClick={() => setSelectedReportDetails(null)} className={`p-1.5 rounded-lg ${t.textMuted} hover:${t.textMain}`}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-5">
+              <p className={`text-[10px] font-semibold uppercase tracking-wider ${t.textMuted} mb-3`}>Reported by: {selectedReportDetails.reporter_email}</p>
+              <div className={`max-h-[50vh] overflow-y-auto p-4 rounded-xl ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.03]'}`}>
+                <p className={`text-sm ${t.textSub} leading-relaxed whitespace-pre-wrap break-words`}>{selectedReportDetails.reason}</p>
+              </div>
+              <button onClick={() => setSelectedReportDetails(null)} className={`w-full mt-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${isLightMode ? 'bg-[#F0F4EE] text-[#3D4E3A] hover:bg-[#E3E8E1]' : 'bg-white/[0.06] text-[#B0C5AA] hover:bg-white/[0.1]'}`}>Close</button>
+            </div>
+          </div>
         </div>
       )}
 
+      {/* Image Viewer (shared by all tabs) */}
+      {viewImage && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-zoom-out" onClick={() => setViewImage(null)}>
+          <button className="absolute top-5 right-5 text-white/50 hover:text-white bg-black/50 p-2 rounded-full transition-colors" onClick={() => setViewImage(null)}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+          <img src={viewImage} alt="Enlarged" className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
     </div>
   );
 }
