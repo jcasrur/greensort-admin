@@ -136,28 +136,32 @@ const GUIDES = {
       },
     ],
   },
-  access: {
+    access: {
     title: 'Admin Access Guide',
     sections: [
       {
         heading: 'Role Levels',
-        body: 'There are two roles: Super Admin (full control — can manage all admins, view the allowlist, change roles) and Admin (standard access — can moderate content and manage users, but cannot promote to Super Admin).',
+        body: 'There are two roles in the admin portal: Super Admin and Admin. Super Admins have full system control and are shown in the roster for visibility only. Admins have standard access for managing users, moderation, drop-off records, and related admin tasks depending on their assigned permissions.',
       },
       {
         heading: 'Inviting an Admin',
-        body: 'Click "Invite Admin" and enter the person\'s email and name. Choose their role. An invitation email is sent via EmailJS. The invitee must use the link in the email to set up their account.',
+        body: 'Click "Invite Admin" and enter the person’s email address and optional full name. This page only sends Admin invitations. The invitee will receive an email with a setup link that allows them to create or activate their admin account.',
       },
       {
-        heading: 'Super Admin Allowlist',
-        body: 'Only Super Admins can see this tab. Before you can invite or promote someone to Super Admin, their email must be added to this allowlist. This is enforced at the database level too.',
+        heading: 'Super Admin Management',
+        body: 'Super Admin accounts cannot be created, invited, promoted, or demoted from this page. For better security, Super Admins must be added or modified directly in Supabase by an authorized system owner or developer.',
       },
       {
         heading: 'Deactivating an Admin',
-        body: 'Click the power icon next to an admin\'s row to deactivate their account. They will not be able to log in until reactivated. You cannot deactivate your own account.',
+        body: 'Click the power icon beside an Admin account to deactivate or reactivate access. You cannot deactivate your own account. Super Admin accounts are view-only here and should be managed directly in Supabase.',
       },
       {
-        heading: 'Pending Invites',
-        body: 'View all sent invitations that haven\'t been accepted yet. Invites expire after 48 hours. Super Admins can revoke an invite early if needed.',
+        heading: 'Pending Admin Invites',
+        body: 'This tab shows Admin invitations that have been sent but not yet accepted. Invites expire after 48 hours. A Super Admin may revoke a pending Admin invite if it was sent by mistake or is no longer needed.',
+      },
+      {
+        heading: 'Email Sending',
+        body: 'Invitation emails are sent through the Supabase Edge Function using the configured Gmail SMTP account. If an invite email fails, check the Supabase function logs, Gmail App Password, and the stored GMAIL_USER and GMAIL_APP_PASSWORD secrets.',
       },
     ],
   },
