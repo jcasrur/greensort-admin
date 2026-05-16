@@ -1,35 +1,44 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import AdminLogin from './AdminLogin';
-import Dashboard from './Dashboard';
-import DropOffNodes from './DropOffNodes';
-import UpcycleManagement from './UpcycleManagement';
-import UserManagement from './UserManagement';
-import ContentModeration from './ContentModeration';
-import PresenceTracker from './PresenceTracker';
-import AdminAccess from './AdminAccess';
-import SurrenderLogs from './SurrenderLogs';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './ThemeContext';
-import ErrorBoundary from './ErrorBoundary'; // 🟢 Prevents full white screen on crashes
+import { ToastProvider } from './Toast';
+import { ConfirmProvider } from './ConfirmModal';
+
+import AdminLogin        from './AdminLogin';
+import Dashboard         from './Dashboard';
+import DropOffNodes      from './DropOffNodes';
+import UserManagement    from './UserManagement';
+import ContentModeration from './ContentModeration';
+import PresenceTracker   from './PresenceTracker';
+import AdminAccess       from './AdminAccess';
+import MFAEnrollment     from './MFAEnrollment';
+import SurrenderLogs     from './SurrenderLogs';
 
 function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <PresenceTracker />
-        {/* ErrorBoundary catches any render crash in any route and shows a readable error instead of a white screen */}
-        <ErrorBoundary>
-          <Routes>
-            <Route path="/"            element={<AdminLogin />} />
-            <Route path="/dashboard"   element={<Dashboard />} />
-            <Route path="/users"       element={<UserManagement />} />
-            <Route path="/moderation"  element={<ContentModeration />} />
-            <Route path="/dropoff"     element={<DropOffNodes />} />
-            <Route path="/upcycle"     element={<UpcycleManagement />} />
-            <Route path="/access"      element={<AdminAccess />} />
-            <Route path="/logs"          element={<SurrenderLogs />} />
-          </Routes>
-        </ErrorBoundary>
-      </BrowserRouter>
+      <ToastProvider>
+        <ConfirmProvider>
+          <BrowserRouter>
+            <PresenceTracker />
+            <Routes>
+              {/* ── Public ── */}
+              <Route path="/"          element={<AdminLogin />} />
+              <Route path="/setup-mfa" element={<MFAEnrollment />} />
+
+              {/* ── Protected ── */}
+              <Route path="/dashboard"  element={<Dashboard />} />
+              <Route path="/users"      element={<UserManagement />} />
+              <Route path="/moderation" element={<ContentModeration />} />
+              <Route path="/dropoff"    element={<DropOffNodes />} />
+              <Route path="/access"         element={<AdminAccess />} />
+              <Route path="/surrender-logs"  element={<SurrenderLogs />} />
+
+              {/* ── Catch-all ── */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </ConfirmProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

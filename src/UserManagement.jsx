@@ -10,7 +10,6 @@ import GuidePanel from './GuidePanel';
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 const INACTIVE_DAYS = 30;   // full inactive threshold
-const AT_RISK_DAYS  = 20;   // warning threshold (20–29 days)
 
 const ADMIN_AVATAR = 'https://ui-avatars.com/api/?name=GreenSort+Admin&background=2D6A4F&color=fff&bold=true';
 
@@ -22,13 +21,12 @@ const daysSince = (dateStr) => {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
 };
 
-// Returns: 'online' | 'offline' | 'at_risk' | 'inactive' | 'banned'
+// Returns: 'online' | 'offline' | 'inactive' | 'banned'
 const getActivityStatus = (user, onlineIds) => {
   if ((user.status || '').toLowerCase() === 'banned') return 'banned';
   if (onlineIds.has(user.id))                          return 'online';
   const days = daysSince(user.last_login);
   if (days >= INACTIVE_DAYS) return 'inactive';
-  if (days >= AT_RISK_DAYS)  return 'at_risk';
   return 'offline';
 };
 
@@ -39,7 +37,6 @@ const ActivityBadge = ({ status, days, isLightMode }) => {
   const cfg = {
     online:   { dot: isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#3CD085] shadow-[0_0_8px_#3CD085]', text: isLightMode ? 'text-[#6C9A7D]' : 'text-[#3CD085]', label: 'Online'           },
     offline:  { dot: isLightMode ? 'bg-[#DCE4DF]' : 'bg-[#35403C]',                           text: 'text-[#6B7C7A]',                                   label: 'Offline'          },
-    at_risk:  { dot: 'bg-amber-400',                                                            text: 'text-amber-500',                                   label: `${days}d inactive`},
     inactive: { dot: 'bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,.6)]',                     text: 'text-orange-500',                                  label: `${days}d inactive`},
     banned:   { dot: 'bg-red-500',                                                              text: 'text-red-500',                                     label: 'Deactivated'      },
   }[status] || { dot: 'bg-gray-400', text: 'text-gray-400', label: 'Unknown' };
@@ -214,7 +211,6 @@ export default function UserManagement() {
   const [filterType, setFilterType] = useState('all');
 
   const [notifyTarget, setNotifyTarget] = useState(null);
-  // Track which users got a notification this session so the button flips to "Notified"
   const [notifySent, setNotifySent] = useState({});
 
   // ── Presence ───────────────────────────────────────────────────────────────
@@ -304,14 +300,12 @@ export default function UserManagement() {
   // ── Computed ───────────────────────────────────────────────────────────────
   const recentCount   = users.filter(u => daysSince(u.created_at) <= 7).length;
   const inactiveCount = users.filter(u => getActivityStatus(u, onlineUserIds) === 'inactive').length;
-  const atRiskCount   = users.filter(u => getActivityStatus(u, onlineUserIds) === 'at_risk').length;
   const onlineCount   = users.filter(u => onlineUserIds.has(u.id)).length;
   const bannedCount   = users.filter(u => (u.status || '').toLowerCase() === 'banned').length;
 
   const filtered = users.filter(u => {
     const s = getActivityStatus(u, onlineUserIds);
     if (filterType === 'online'   && s !== 'online')   return false;
-    if (filterType === 'at_risk'  && s !== 'at_risk' && s !== 'inactive') return false;
     if (filterType === 'inactive' && s !== 'inactive') return false;
     if (filterType === 'banned'   && s !== 'banned')   return false;
     const q = search.toLowerCase();
@@ -335,10 +329,9 @@ export default function UserManagement() {
 
   const filterTabs = [
     { key: 'all',      label: 'All',          count: users.length,          alert: false },
-    { key: 'online',   label: 'Online',        count: onlineCount,           alert: false },
-    { key: 'at_risk',  label: 'At Risk',       count: atRiskCount,           alert: atRiskCount > 0 },
+    { key: 'online',   label: 'Online',       count: onlineCount,           alert: false },
     { key: 'inactive', label: 'Inactive 30d+', count: inactiveCount,         alert: inactiveCount > 0 },
-    { key: 'banned',   label: 'Deactivated',   count: bannedCount,           alert: false },
+    { key: 'banned',   label: 'Deactivated',  count: bannedCount,           alert: false },
   ];
 
   return (
@@ -355,7 +348,7 @@ export default function UserManagement() {
           </div>
 
           {/* ── Stat cards ── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
 
             <ThemedCard className="flex flex-col justify-between h-[130px]">
               <p className={`text-[12px] font-semibold ${t.textMain} tracking-wide`}>Total Users</p>
@@ -365,24 +358,6 @@ export default function UserManagement() {
             <ThemedCard className={`flex flex-col justify-between h-[130px] border ${isLightMode ? 'bg-[#E4EFE8]/30 border-[#98BAA3]/20' : 'bg-gradient-to-br from-[#151B1F] to-[#122119] border-[#3CD085]/20'}`}>
               <p className={`text-[12px] font-semibold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#3CD085]'} tracking-wide`}>New This Week</p>
               <p className={`text-[36px] font-bold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#3CD085]'} leading-none mt-auto`}>+{recentCount}</p>
-            </ThemedCard>
-
-            <ThemedCard className={`flex flex-col justify-between h-[130px] border ${
-              atRiskCount > 0
-                ? (isLightMode ? 'bg-amber-50/50 border-amber-200/50' : 'bg-amber-500/5 border-amber-500/15')
-                : ''
-            }`}>
-              <div className="flex items-start justify-between">
-                <p className={`text-[12px] font-semibold tracking-wide ${atRiskCount > 0 ? 'text-amber-500' : t.textMain}`}>
-                  At Risk (20–29d)
-                </p>
-                {atRiskCount > 0 && (
-                  <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                )}
-              </div>
-              <p className={`text-[36px] font-bold leading-none mt-auto ${atRiskCount > 0 ? 'text-amber-500' : t.textMain}`}>{atRiskCount}</p>
             </ThemedCard>
 
             <ThemedCard className={`flex flex-col justify-between h-[130px] border ${
@@ -422,9 +397,7 @@ export default function UserManagement() {
                   {tab.count > 0 && (
                     <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
                       tab.alert
-                        ? tab.key === 'inactive'
-                          ? 'bg-orange-500/20 text-orange-500'
-                          : 'bg-amber-400/20 text-amber-500'
+                        ? 'bg-orange-500/20 text-orange-500'
                         : isLightMode ? 'bg-[#E3E8E1] text-[#7A8C77]' : 'bg-white/[0.06] text-[#627A5C]'
                     }`}>
                       {tab.count}
@@ -492,7 +465,6 @@ export default function UserManagement() {
                       const days            = daysSince(user.last_login);
                       const isBanned        = actStatus === 'banned';
                       const isInactive      = actStatus === 'inactive';
-                      const isAtRisk        = actStatus === 'at_risk';
                       const alreadyNotified = !!notifySent[user.id];
 
                       return (
@@ -500,8 +472,8 @@ export default function UserManagement() {
                           key={user.id}
                           className={`border-b transition-colors ${
                             isLightMode
-                              ? `border-[#F0F4F1] ${isInactive ? 'bg-orange-50/30 hover:bg-orange-50/60' : isAtRisk ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'hover:bg-[#F9FBF9]'}`
-                              : `border-white/[0.03] ${isInactive ? 'bg-orange-500/[0.04] hover:bg-orange-500/[0.07]' : isAtRisk ? 'bg-amber-500/[0.03] hover:bg-amber-500/[0.05]' : 'hover:bg-white/[0.02]'}`
+                              ? `border-[#F0F4F1] ${isInactive ? 'bg-orange-50/30 hover:bg-orange-50/60' : 'hover:bg-[#F9FBF9]'}`
+                              : `border-white/[0.03] ${isInactive ? 'bg-orange-500/[0.04] hover:bg-orange-500/[0.07]' : 'hover:bg-white/[0.02]'}`
                           }`}
                         >
                           {/* User */}
@@ -536,7 +508,7 @@ export default function UserManagement() {
                           {/* Last seen */}
                           <td className="px-4 py-4">
                             <span className={`text-xs font-medium ${
-                              isInactive ? 'text-orange-500' : isAtRisk ? 'text-amber-500' : t.textMuted
+                              isInactive ? 'text-orange-500' : t.textMuted
                             }`}>
                               {fmtLastSeen(user.last_login)}
                             </span>
@@ -549,17 +521,15 @@ export default function UserManagement() {
                           <td className="px-6 py-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
 
-                              {/* Notify — only for at_risk / inactive, not banned */}
-                              {(isAtRisk || isInactive) && !isBanned && (
+                              {/* Notify — only for inactive, not banned */}
+                              {isInactive && !isBanned && (
                                 <button
                                   onClick={() => setNotifyTarget(user)}
                                   title={alreadyNotified ? 'Already notified this session' : 'Send inactivity notice'}
                                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${
                                     alreadyNotified
                                       ? (isLightMode ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400')
-                                      : isInactive
-                                        ? (isLightMode ? 'border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100' : 'border-orange-500/25 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20')
-                                        : (isLightMode ? 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100' : 'border-amber-500/25 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20')
+                                      : (isLightMode ? 'border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100' : 'border-orange-500/25 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20')
                                   }`}
                                 >
                                   {alreadyNotified ? (
@@ -580,7 +550,7 @@ export default function UserManagement() {
                                 </button>
                               )}
 
-                              {/* Deactivate (inactive/at_risk) or Reactivate (banned) */}
+                              {/* Deactivate (inactive) or Reactivate (banned) */}
                               {isBanned ? (
                                 <button
                                   onClick={() => handleReactivate(user)}
@@ -591,7 +561,7 @@ export default function UserManagement() {
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                                   </svg>
                                 </button>
-                              ) : (isAtRisk || isInactive) && (
+                              ) : isInactive && (
                                 <button
                                   onClick={() => handleDeactivate(user)}
                                   title="Deactivate account"
@@ -627,7 +597,7 @@ export default function UserManagement() {
           </ThemedCard>
 
           {/* Inactivity policy banner — only when there are flagged users */}
-          {(inactiveCount > 0 || atRiskCount > 0) && (
+          {inactiveCount > 0 && (
             <div className={`rounded-2xl border p-4 mb-10 flex items-start gap-3 ${
               isLightMode ? 'bg-amber-50 border-amber-200/60' : 'bg-amber-500/5 border-amber-500/15'
             }`}>
@@ -636,9 +606,7 @@ export default function UserManagement() {
               </svg>
               <p className="text-xs text-amber-600 leading-relaxed">
                 <span className="font-bold">Inactivity Policy —</span>{' '}
-                Users who haven't logged in for <span className="font-bold">{AT_RISK_DAYS}–{INACTIVE_DAYS - 1} days</span> are flagged{' '}
-                <span className="font-bold text-amber-500">At Risk</span>. After{' '}
-                <span className="font-bold">{INACTIVE_DAYS}+ days</span> they are marked{' '}
+                Users who haven't logged in for <span className="font-bold">{INACTIVE_DAYS}+ days</span> are flagged{' '}
                 <span className="font-bold text-orange-500">Inactive</span>. Use{' '}
                 <span className="font-bold">Notify</span> to send an in-app warning before deactivating.
                 Deactivated accounts can be reactivated at any time.

@@ -29,19 +29,19 @@ const GUIDES = {
     sections: [
       {
         heading: 'Activity Status',
-        body: 'Each user shows one of five states: Online (currently in the app via presence tracking), Offline (active recently but not right now), At Risk (20–29 days since last login), Inactive (30+ days since last login), or Deactivated (account blocked). At Risk rows are tinted amber, Inactive rows are tinted orange so they stand out immediately.',
+        body: 'Each user shows one of four states: Online (currently in the app via presence tracking), Offline (active recently but not right now), Inactive (30+ days since last login), or Deactivated (account blocked). Inactive rows are tinted orange so they stand out immediately.',
       },
       {
         heading: 'Filter Tabs',
-        body: 'Use the tabs above the table to filter by status. The At Risk and Inactive tabs show badge counts so you know at a glance how many users need attention. The search bar filters by name or email across the current tab.',
+        body: 'Use the tabs above the table to filter by status. The Inactive tab shows a badge count so you know at a glance how many users need attention. The search bar filters by name or email across the current tab.',
       },
       {
         heading: 'Notify Button',
-        body: 'The amber "Notify" button appears only on At Risk and Inactive rows. Clicking it opens a modal where you choose between an Inactivity Warning, a Final Notice (48h), or a Custom Message. The notification is delivered in-app — the user will see it the next time they open GreenSort. Once sent, the button flips to a green "Notified" state for the rest of your session.',
+        body: 'The "Notify" button appears only on Inactive rows. Clicking it opens a modal where you choose between an Inactivity Warning, a Final Notice (48h), or a Custom Message. The notification is delivered in-app — the user will see it the next time they open GreenSort. Once sent, the button flips to a green "Notified" state for the rest of your session.',
       },
       {
         heading: 'Deactivating a User',
-        body: 'The power icon appears on At Risk and Inactive rows. Deactivating sets the account status to Banned (the user can no longer log in) and sends them an in-app notification explaining why. This is reversible — click the checkmark icon on a Deactivated row to reactivate them and send a welcome-back notification.',
+        body: 'The power icon appears on Inactive rows. Deactivating sets the account status to Banned (the user can no longer log in) and sends them an in-app notification explaining why. This is reversible — click the checkmark icon on a Deactivated row to reactivate them and send a welcome-back notification.',
       },
       {
         heading: 'Deleting a User',
@@ -49,7 +49,7 @@ const GUIDES = {
       },
       {
         heading: 'Inactivity Thresholds',
-        body: 'The At Risk threshold is 20 days and the Inactive threshold is 30 days. Both values are defined as constants at the top of UserManagement.jsx and can be adjusted to match your platform\'s policy.',
+        body: 'The Inactive threshold is 30 days. This value is defined as a constant at the top of UserManagement.jsx and can be adjusted to match your platform\'s policy.',
       },
     ],
   },
@@ -104,31 +104,6 @@ const GUIDES = {
       {
         heading: 'Managing Rewards',
         body: 'In the Active Nodes tab, each center has a green "Rewards" button. Click it to open the Rewards Inventory drawer for that center. You can add new reward items, edit existing ones, toggle availability (hides/shows the reward in the mobile app without deleting it), and delete rewards permanently. Each reward needs a Name and a Condition — the Condition field (e.g. "1kg Plastic") is what the mobile app parses to calculate how many rewards a user can claim.',
-      },
-    ],
-  },
-  upcycle: {
-    title: 'Upcycle Management Guide',
-    sections: [
-      {
-        heading: 'Suggestions Tab',
-        body: 'New upcycling project ideas land here with status "suggestion". Each row shows the project name, material category, difficulty, estimated time, and cost. Click any row to open the full detail drawer and read through the complete materials list and step-by-step instructions before deciding.',
-      },
-      {
-        heading: 'Published Tab',
-        body: 'Projects you have approved are moved here with status "published". These are the tutorials visible to all GreenSort app users. You can unpublish a project at any time — it returns to the Suggestions queue for re-review.',
-      },
-      {
-        heading: 'Publishing a Project',
-        body: 'Open the detail drawer (click a row or the eye icon), review the full content, then click "Publish to App". The project status changes to published and your admin name is stamped as the reviewer. The mobile app can then read all published projects.',
-      },
-      {
-        heading: 'Rejecting a Project',
-        body: 'If a suggestion is unsafe, incorrect, or low quality, click the trash icon (or "Reject & Delete" in the drawer). This permanently deletes it from the database — it cannot be recovered.',
-      },
-      {
-        heading: 'Adding New Suggestions',
-        body: 'Suggestions can be inserted directly into the upcycle_projects table in Supabase with status = "suggestion". In a future update, admins will be able to create them from this page. The mobile Scan page can also be extended to submit ideas here instead of (or in addition to) saved_projects.',
       },
     ],
   },

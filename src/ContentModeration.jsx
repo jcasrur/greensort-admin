@@ -10,18 +10,24 @@ export default function ContentModeration() {
   const [reports, setReports] = useState([]);
   const [commentReports, setCommentReports] = useState([]);
   const [userReports, setUserReports] = useState([]);
-  const [appeals, setAppeals] = useState([]);           // 🟢 NEW
+  const [appeals, setAppeals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedReportDetails, setSelectedReportDetails] = useState(null);
   const [viewImage, setViewImage] = useState(null);
-  const [banModal, setBanModal]     = useState(null);   // { report } | null
+  const [banModal, setBanModal] = useState(null);
+
+  // ─── STABLE TEXT COLORS ────────────────────────────────────────────────────
+  // Forces proper light/dark contrast instead of relying on the context variable
+  const txtMain  = isLightMode ? 'text-[#1A2A1A]' : 'text-[#E8F0E5]';
+  const txtSub   = isLightMode ? 'text-[#2D4A38]' : 'text-[#C4D9CC]';
+  const txtMuted = isLightMode ? 'text-[#5E7A67]' : 'text-[#A8BDA2]';
 
   useEffect(() => {
     if (activeTab === 'all_posts')         fetchPosts();
     else if (activeTab === 'reports')      fetchReports();
     else if (activeTab === 'reported_comments') fetchCommentReports();
     else if (activeTab === 'reported_users')    fetchUserReports();
-    else if (activeTab === 'appeals')      fetchAppeals();   // 🟢 NEW
+    else if (activeTab === 'appeals')      fetchAppeals();
   }, [activeTab]);
 
   const timeAgo = (ds) => {
@@ -34,7 +40,7 @@ export default function ContentModeration() {
     return `${Math.floor(s / 2592000)}mo ago`;
   };
 
-  // ─── Existing fetchers ────────────────────────────────────────────────────
+  // ─── Fetchers ────────────────────────────────────────────────────────────
   const fetchPosts = async () => {
     setLoading(true);
     try {
@@ -84,13 +90,9 @@ export default function ContentModeration() {
     } catch (e) { console.error(e); setUserReports([]); } finally { setLoading(false); }
   };
 
-  // ─── 🟢 NEW: Appeals fetcher ─────────────────────────────────────────────
-  // Joins appeals → posts so we can show the post title, image, and ai_reason
-  // alongside what the user wrote in their appeal.
   const fetchAppeals = async () => {
     setLoading(true);
     try {
-      // Fetch appeals first
       const { data: appealsData, error } = await supabase
         .from('appeals')
         .select('*')
@@ -103,7 +105,6 @@ export default function ContentModeration() {
         return;
       }
 
-      // Manually join posts — avoids relying on FK relationship in Supabase schema
       const postIds = [...new Set(appealsData.map(a => a.post_id).filter(Boolean))];
       let postsMap = {};
       if (postIds.length > 0) {
@@ -114,7 +115,6 @@ export default function ContentModeration() {
         if (postsData) postsData.forEach(p => { postsMap[p.id] = p; });
       }
 
-      // Attach post data to each appeal
       const enriched = appealsData.map(a => ({
         ...a,
         posts: postsMap[a.post_id] || null,
@@ -124,7 +124,7 @@ export default function ContentModeration() {
     } catch (e) { console.error('fetchAppeals error:', e); setAppeals([]); } finally { setLoading(false); }
   };
 
-  // ─── Existing action handlers ─────────────────────────────────────────────
+  // ─── Action handlers ─────────────────────────────────────────────────────
   const handleDeletePost = async (postId) => {
     if (!window.confirm('Delete this post? This cannot be undone.')) return;
     try {
@@ -157,35 +157,24 @@ export default function ContentModeration() {
     } catch (e) { alert('Error: ' + e.message); }
   };
 
-  // ─── 🟢 NEW: Appeal action handlers ──────────────────────────────────────
-
-  /**
-   * RESTORE POST
-   * 1. Set posts.status = 'active'   → post reappears in the community feed
-   * 2. Set appeals.status = 'Approved'
-   * 3. Send in-app notification to the user so they know their appeal won
-   */
   const handleRestorePost = async (appeal) => {
     const post = appeal.posts;
     if (!post) return alert('Cannot find the original post. It may have already been deleted.');
     if (!window.confirm(`Restore "${post.title || 'this post'}" to the public feed?`)) return;
 
     try {
-      // 1. Restore the post
       const { error: postError } = await supabase
         .from('posts')
         .update({ status: 'active', ai_reason: null })
         .eq('id', post.id);
       if (postError) throw postError;
 
-      // 2. Mark appeal as resolved
       const { error: appealError } = await supabase
         .from('appeals')
         .update({ status: 'Approved' })
         .eq('id', appeal.id);
       if (appealError) throw appealError;
 
-      // 3. Notify the user
       await supabase.from('notifications').insert([{
         owner_name: appeal.user_name,
         actor_name: 'GreenSort Admin',
@@ -200,25 +189,17 @@ export default function ContentModeration() {
     } catch (e) { alert('Error: ' + e.message); }
   };
 
-  /**
-   * UPHOLD FLAG
-   * 1. Keep posts.status = 'flagged'  → no change to the post
-   * 2. Set appeals.status = 'Rejected'
-   * 3. Send in-app notification explaining the decision
-   */
   const handleUpholdFlag = async (appeal) => {
     const post = appeal.posts;
     if (!window.confirm(`Uphold the AI flag and keep this post hidden?`)) return;
 
     try {
-      // 1. Mark appeal as rejected
       const { error: appealError } = await supabase
         .from('appeals')
         .update({ status: 'Rejected' })
         .eq('id', appeal.id);
       if (appealError) throw appealError;
 
-      // 2. Notify the user
       await supabase.from('notifications').insert([{
         owner_name: appeal.user_name,
         actor_name: 'GreenSort Admin',
@@ -233,7 +214,7 @@ export default function ContentModeration() {
     } catch (e) { alert('Error: ' + e.message); }
   };
 
-  // ─── Shared style helpers (unchanged) ─────────────────────────────────────
+  // ─── Shared style helpers ────────────────────────────────────────────────
   const cardBase = `rounded-2xl border overflow-hidden transition-all ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.05]'}`;
   const cardHeader = (color) => `p-4 border-b flex items-start gap-3 ${
     color === 'red'    ? (isLightMode ? 'bg-red-50 border-red-100'       : 'bg-red-500/5 border-red-500/10') :
@@ -246,14 +227,6 @@ export default function ContentModeration() {
   const reporterText = { red: isLightMode ? 'text-red-600' : 'text-red-400', yellow: isLightMode ? 'text-amber-700' : 'text-amber-400', purple: isLightMode ? 'text-violet-700' : 'text-violet-400', orange: isLightMode ? 'text-orange-700' : 'text-orange-400' };
   const reasonText   = { red: isLightMode ? 'text-red-700' : 'text-red-300', yellow: isLightMode ? 'text-amber-800' : 'text-amber-200', purple: isLightMode ? 'text-violet-700' : 'text-violet-200', orange: isLightMode ? 'text-orange-800' : 'text-orange-200' };
 
-  const Avatar = ({ src, name, size = 10 }) => {
-    const initials = (name || '?').substring(0, 2).toUpperCase();
-    return src
-      ? <img src={src} alt={name} className={`w-${size} h-${size} rounded-full object-cover border ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/[0.07]'}`} />
-      : <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${t.iconBg1}`}>{initials}</div>;
-  };
-
-  // 🟢 Appeals count added to tab list
   const tabs = [
     { key: 'all_posts',          label: 'All Posts',          count: 0 },
     { key: 'reports',            label: 'Reported Posts',     count: reports.length },
@@ -283,8 +256,8 @@ export default function ContentModeration() {
 
           {/* Header */}
           <div className="mb-7">
-            <h1 className={`text-2xl font-bold ${t.textMain}`}>Content Moderation</h1>
-            <p className={`${t.textMuted} mt-1 text-sm`}>Monitor community posts and user reports</p>
+            <h1 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Content Moderation</h1>
+            <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Monitor community posts and user reports</p>
           </div>
 
           {/* Tabs */}
@@ -294,7 +267,7 @@ export default function ContentModeration() {
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all duration-200 ${
                   activeTab === tab.key
                     ? (isLightMode ? 'bg-white text-[#2D6A4F] shadow-sm font-semibold' : 'bg-[#1C2620] text-[#52B788] border border-[#52B788]/20 font-semibold')
-                    : `${t.textMuted} hover:${t.textMain} font-medium`
+                    : `${txtMuted} ${isLightMode ? 'hover:text-[#1A2A1A]' : 'hover:text-[#E8F0E5]'} font-medium`
                 }`}
               >
                 {tab.label}
@@ -305,7 +278,7 @@ export default function ContentModeration() {
 
           {/* Top bar */}
           <div className="flex justify-between items-center mb-5">
-            <h2 className={`text-base font-semibold ${t.textMain}`}>
+            <h2 className={`text-base font-semibold ${txtMain}`}>
               {activeTab === 'all_posts'         ? 'Community Feed' :
                activeTab === 'reports'           ? 'Pending Post Reports' :
                activeTab === 'reported_comments' ? 'Pending Comment Reports' :
@@ -341,16 +314,16 @@ export default function ContentModeration() {
                               : <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>{post.display_initials}</div>
                             }
                             <div>
-                              <p className={`text-sm font-semibold ${t.textMain} max-w-[160px] truncate`}>{post.display_name}</p>
-                              <p className={`text-[11px] ${t.textMuted}`}>{timeAgo(post.created_at)}</p>
+                              <p className={`text-sm font-semibold ${txtMain} max-w-[160px] truncate`}>{post.display_name}</p>
+                              <p className={`text-[11px] ${txtMuted}`}>{timeAgo(post.created_at)}</p>
                             </div>
                           </div>
                           {post.type && <span className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase ${isLightMode ? 'bg-[#DDE9F5] text-[#2A5FA8]' : 'bg-[#4A9ECC]/10 text-[#4A9ECC]'}`}>{post.type}</span>}
                         </div>
 
                         <div className="p-4 flex-1">
-                          {post.title && <h3 className={`font-semibold ${t.textMain} text-sm mb-1.5 leading-snug`}>{post.title}</h3>}
-                          <p className={`text-sm ${t.textMuted} leading-relaxed line-clamp-3`}>{post.display_text}</p>
+                          {post.title && <h3 className={`font-semibold ${txtMain} text-sm mb-1.5 leading-snug`}>{post.title}</h3>}
+                          <p className={`text-sm ${txtMuted} leading-relaxed line-clamp-3`}>{post.display_text}</p>
                         </div>
 
                         {post.display_image && (
@@ -360,11 +333,11 @@ export default function ContentModeration() {
                         )}
 
                         <div className={`p-3 flex items-center justify-between ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.015]'}`}>
-                          <div className={`flex gap-3 text-[11px] ${t.textMuted}`}>
+                          <div className={`flex gap-3 text-[11px] ${txtMuted}`}>
                             {post.location && <span className="flex items-center gap-1">{post.location}</span>}
                             {post.price && post.price !== '0' && <span className={`font-semibold ${t.accentText}`}>{post.price}</span>}
                           </div>
-                          <button onClick={() => handleDeletePost(post.id)} className={`p-1.5 rounded-lg transition-all ${t.textMuted} hover:text-red-500 hover:bg-red-500/10`}>
+                          <button onClick={() => handleDeletePost(post.id)} className={`p-1.5 rounded-lg transition-all ${txtMuted} hover:text-red-500 hover:bg-red-500/10`}>
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                           </button>
                         </div>
@@ -397,13 +370,13 @@ export default function ContentModeration() {
                           <div className="p-4 flex items-center gap-3">
                             {post.avatar ? <img src={post.avatar} alt="a" className="w-8 h-8 rounded-full object-cover" /> : <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>{(post.user || '?').substring(0, 2).toUpperCase()}</div>}
                             <div>
-                              <p className={`text-sm font-semibold ${t.textSub}`}>{post.user}</p>
-                              <p className={`text-[11px] ${t.textMuted}`}>Posted {timeAgo(post.created_at)}</p>
+                              <p className={`text-sm font-semibold ${txtMain}`}>{post.user}</p>
+                              <p className={`text-[11px] ${txtMuted}`}>Posted {timeAgo(post.created_at)}</p>
                             </div>
                           </div>
                           <div className="px-4 pb-3 flex-1">
-                            {post.title && <p className={`font-semibold ${t.textMain} text-sm mb-1`}>{post.title}</p>}
-                            <p className={`text-xs ${t.textMuted} line-clamp-2`}>{post.desc || 'No content.'}</p>
+                            {post.title && <p className={`font-semibold ${txtMain} text-sm mb-1`}>{post.title}</p>}
+                            <p className={`text-xs ${txtMuted} line-clamp-2`}>{post.desc || 'No content.'}</p>
                           </div>
                           {post.image && (
                             <div className={`w-full h-44 flex items-center justify-center overflow-hidden border-t border-b ${isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'}`}>
@@ -416,7 +389,7 @@ export default function ContentModeration() {
                               Approve Report & Delete Post
                             </button>
                             <button onClick={() => handleDeclineReport(report.id, report.reporter_email, post.title, report.reason)}
-                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>
                               Decline Report & Keep Post
                             </button>
                           </div>
@@ -451,11 +424,11 @@ export default function ContentModeration() {
                             <div className="flex items-center gap-2.5 mb-3">
                               {comment.avatar ? <img src={comment.avatar} alt="a" className="w-7 h-7 rounded-full object-cover" /> : <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${t.iconBg1}`}>{(comment.user_name || '?').substring(0, 2).toUpperCase()}</div>}
                               <div>
-                                <p className={`text-xs font-semibold ${t.textMain}`}>{comment.user_name}</p>
-                                <p className={`text-[10px] ${t.textMuted}`}>{timeAgo(comment.created_at)}</p>
+                                <p className={`text-xs font-semibold ${txtMain}`}>{comment.user_name}</p>
+                                <p className={`text-[10px] ${txtMuted}`}>{timeAgo(comment.created_at)}</p>
                               </div>
                             </div>
-                            <p className={`text-xs ${t.textMuted} leading-relaxed border-l-2 pl-3 italic ${isLightMode ? 'border-amber-300' : 'border-amber-500/40'}`}>"{comment.text}"</p>
+                            <p className={`text-xs ${txtMuted} leading-relaxed border-l-2 pl-3 italic ${isLightMode ? 'border-amber-300' : 'border-amber-500/40'}`}>"{comment.text}"</p>
                           </div>
                           <div className="flex-1" />
                           <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FFFBF4]' : 'bg-amber-500/[0.03]'}`}>
@@ -467,7 +440,7 @@ export default function ContentModeration() {
                             </button>
                             <button
                               onClick={() => handleDismissCommentReport(report)}
-                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
                             >
                               Dismiss Report
                             </button>
@@ -503,8 +476,8 @@ export default function ContentModeration() {
                               : <div className={`w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold ${t.iconBg1}`}>{(report.reported_user || 'U').substring(0, 2).toUpperCase()}</div>
                             }
                             <div className="text-center">
-                              <h3 className={`font-semibold ${t.textMain} text-base`}>{report.reported_user || 'Unknown User'}</h3>
-                              <p className={`text-xs ${t.textMuted} mt-0.5`}>Reported Account</p>
+                              <h3 className={`font-semibold ${txtMain} text-base`}>{report.reported_user || 'Unknown User'}</h3>
+                              <p className={`text-xs ${txtMuted} mt-0.5`}>Reported Account</p>
                             </div>
                           </div>
                           <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FAF8FF]' : 'bg-violet-500/[0.03]'}`}>
@@ -516,7 +489,7 @@ export default function ContentModeration() {
                             </button>
                             <button
                               onClick={() => handleDismissUserReport(report)}
-                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
+                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
                             >
                               Dismiss Report
                             </button>
@@ -528,18 +501,7 @@ export default function ContentModeration() {
                 </div>
               )}
 
-              {/* ─────────────────────────────────────────────────────────────
-                  TAB 5: APPEALS  🟢 NEW
-                  Shows every pending appeal submitted via the mobile app.
-                  Each card contains:
-                    • Who appealed  (user_name from appeals table)
-                    • The original post  (joined via posts FK)
-                    • The AI flag reason  (ai_reason stored on the post)
-                    • The user's own explanation  (reason from appeals table)
-                  Actions:
-                    • Restore Post   → sets posts.status = 'active'
-                    • Uphold Flag    → keeps post flagged, notifies user
-              ───────────────────────────────────────────────────────────── */}
+              {/* TAB 5: APPEALS */}
               {activeTab === 'appeals' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {appeals.length === 0 ? (
@@ -549,7 +511,6 @@ export default function ContentModeration() {
                   ) : (
                     appeals.map(appeal => {
                       const post = appeal.posts;
-                      // post might be null if it was already hard-deleted
                       const postTitle   = post?.title   || '(Post was deleted)';
                       const postImage   = post?.image   ? post.image.split(',')[0] : null;
                       const aiReason    = post?.ai_reason || 'No AI reason recorded.';
@@ -560,9 +521,7 @@ export default function ContentModeration() {
                           key={appeal.id}
                           className={`${cardBase} flex flex-col border-orange-200/60 ${isLightMode ? '' : '!border-orange-500/20'}`}
                         >
-                          {/* ── Card header: Appeal metadata ── */}
                           <div className={cardHeader('orange')}>
-                            {/* Appeal icon */}
                             <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${iconColor.orange}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
                             </svg>
@@ -570,22 +529,18 @@ export default function ContentModeration() {
                               <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.orange} mb-1`}>
                                 Appeal by: <span className="normal-case">{appeal.user_name}</span>
                               </p>
-                              <p className={`text-[11px] ${t.textMuted}`}>{timeAgo(appeal.created_at)}</p>
+                              <p className={`text-[11px] ${txtMuted}`}>{timeAgo(appeal.created_at)}</p>
                             </div>
                           </div>
 
-                          {/* ── Post snapshot ── */}
                           <div className="p-4 flex-1 space-y-3">
-
-                            {/* Post title */}
                             <div>
-                              <p className={`text-[10px] font-bold uppercase tracking-wider ${t.textMuted} mb-1`}>Post Title</p>
-                              <p className={`text-sm font-semibold ${isPostGone ? 'text-red-400 italic' : t.textMain} leading-snug`}>
+                              <p className={`text-[10px] font-bold uppercase tracking-wider ${txtMuted} mb-1`}>Post Title</p>
+                              <p className={`text-sm font-semibold ${isPostGone ? 'text-red-400 italic' : txtMain} leading-snug`}>
                                 {postTitle}
                               </p>
                             </div>
 
-                            {/* Post thumbnail (first image only) */}
                             {postImage && !isPostGone && (
                               <div
                                 className={`w-full h-36 rounded-xl overflow-hidden border cursor-zoom-in ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'}`}
@@ -600,7 +555,6 @@ export default function ContentModeration() {
                               </div>
                             )}
 
-                            {/* AI flag reason — shown in a distinct red bubble */}
                             <div className={`rounded-xl p-3 border ${isLightMode ? 'bg-red-50 border-red-100' : 'bg-red-500/5 border-red-500/10'}`}>
                               <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${isLightMode ? 'text-red-600' : 'text-red-400'}`}>
                                 ⚠ AI Flag Reason
@@ -610,7 +564,6 @@ export default function ContentModeration() {
                               </p>
                             </div>
 
-                            {/* User's own appeal explanation */}
                             <div className={`rounded-xl p-3 border ${isLightMode ? 'bg-orange-50 border-orange-100' : 'bg-orange-500/5 border-orange-500/10'}`}>
                               <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${reporterText.orange}`}>
                                 User's Explanation
@@ -621,16 +574,13 @@ export default function ContentModeration() {
                             </div>
                           </div>
 
-                          {/* ── Action buttons ── */}
                           <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FFFAF5]' : 'bg-orange-500/[0.03]'}`}>
                             {isPostGone ? (
-                              /* Post was already deleted — nothing to restore */
                               <div className={`w-full py-3 rounded-xl text-xs font-medium text-center ${isLightMode ? 'bg-[#F4F6F2] text-[#7A8C77]' : 'bg-white/[0.04] text-[#627A5C]'}`}>
                                 Original post no longer exists
                               </div>
                             ) : (
                               <>
-                                {/* RESTORE */}
                                 <button
                                   onClick={() => handleRestorePost(appeal)}
                                   className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-emerald-600 hover:bg-emerald-500 flex items-center justify-center gap-2"
@@ -640,11 +590,9 @@ export default function ContentModeration() {
                                   </svg>
                                   Restore Post
                                 </button>
-
-                                {/* UPHOLD */}
                                 <button
                                   onClick={() => handleUpholdFlag(appeal)}
-                                  className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 ${t.textMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
+                                  className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 ${txtMuted} ${isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}
                                 >
                                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
@@ -682,18 +630,16 @@ export default function ContentModeration() {
                   </svg>
                 </div>
                 <div>
-                  <h3 className={`text-sm font-bold ${t.textMain}`}>Take Action on User</h3>
-                  <p className={`text-[11px] font-medium ${t.textMuted} mt-0.5`}>{banModal.report.reported_user}</p>
+                  <h3 className={`text-sm font-bold ${txtMain}`}>Take Action on User</h3>
+                  <p className={`text-[11px] font-medium ${txtMuted} mt-0.5`}>{banModal.report.reported_user}</p>
                 </div>
               </div>
             </div>
             <div className="p-5 space-y-3">
-              {/* Reported by + reason recap */}
               <div className={`p-3 rounded-xl border text-xs ${isLightMode ? 'bg-[#F7F9F6] border-[#E3E8E1]' : 'bg-white/[0.02] border-white/[0.05]'}`}>
-                <p className={`font-semibold ${t.textMuted} mb-1`}>Reported by: {banModal.report.reporter_email}</p>
-                <p className={`${t.textSub} leading-relaxed`}>{banModal.report.reason}</p>
+                <p className={`font-semibold ${txtMuted} mb-1`}>Reported by: {banModal.report.reporter_email}</p>
+                <p className={`${txtSub} leading-relaxed`}>{banModal.report.reason}</p>
               </div>
-              {/* Ban button */}
               <button
                 onClick={() => handleBanUser(banModal.report, 'ban')}
                 className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-400 transition-all flex items-center justify-center gap-2"
@@ -703,7 +649,6 @@ export default function ContentModeration() {
                 </svg>
                 Ban User (set status = Banned)
               </button>
-              {/* Warn button */}
               <button
                 onClick={() => handleBanUser(banModal.report, 'warn')}
                 className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-400 transition-all flex items-center justify-center gap-2"
@@ -713,7 +658,6 @@ export default function ContentModeration() {
                 </svg>
                 Issue Warning Only (no ban)
               </button>
-              {/* Cancel */}
               <button
                 onClick={() => setBanModal(null)}
                 className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-all ${
@@ -727,20 +671,20 @@ export default function ContentModeration() {
         </div>
       )}
 
-      {/* Full Reason Modal (shared by all tabs) */}
+      {/* Full Reason Modal */}
       {selectedReportDetails && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedReportDetails(null)}>
           <div className={`w-full max-w-lg rounded-2xl border shadow-2xl ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.07]'}`} onClick={e => e.stopPropagation()}>
             <div className={`p-5 border-b ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'} flex items-center justify-between`}>
-              <h3 className={`font-semibold ${t.textMain}`}>Full Report Details</h3>
-              <button onClick={() => setSelectedReportDetails(null)} className={`p-1.5 rounded-lg ${t.textMuted} hover:${t.textMain}`}>
+              <h3 className={`font-semibold ${txtMain}`}>Full Report Details</h3>
+              <button onClick={() => setSelectedReportDetails(null)} className={`p-1.5 rounded-lg ${txtMuted} ${isLightMode ? 'hover:text-[#1A2A1A]' : 'hover:text-[#E8F0E5]'}`}>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
             <div className="p-5">
-              <p className={`text-[10px] font-semibold uppercase tracking-wider ${t.textMuted} mb-3`}>Reported by: {selectedReportDetails.reporter_email}</p>
+              <p className={`text-[10px] font-semibold uppercase tracking-wider ${txtMuted} mb-3`}>Reported by: {selectedReportDetails.reporter_email}</p>
               <div className={`max-h-[50vh] overflow-y-auto p-4 rounded-xl ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.03]'}`}>
-                <p className={`text-sm ${t.textSub} leading-relaxed whitespace-pre-wrap break-words`}>{selectedReportDetails.reason}</p>
+                <p className={`text-sm ${txtSub} leading-relaxed whitespace-pre-wrap break-words`}>{selectedReportDetails.reason}</p>
               </div>
               <button onClick={() => setSelectedReportDetails(null)} className={`w-full mt-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${isLightMode ? 'bg-[#F0F4EE] text-[#3D4E3A] hover:bg-[#E3E8E1]' : 'bg-white/[0.06] text-[#B0C5AA] hover:bg-white/[0.1]'}`}>Close</button>
             </div>
@@ -748,7 +692,7 @@ export default function ContentModeration() {
         </div>
       )}
 
-      {/* Image Viewer (shared by all tabs) */}
+      {/* Image Viewer */}
       {viewImage && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-zoom-out" onClick={() => setViewImage(null)}>
           <button className="absolute top-5 right-5 text-white/50 hover:text-white bg-black/50 p-2 rounded-full transition-colors" onClick={() => setViewImage(null)}>

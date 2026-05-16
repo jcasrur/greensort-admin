@@ -115,12 +115,8 @@ const Dashboard = () => {
 
           {/* Header */}
           <div className="mb-8">
-            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-semibold mb-3 ${t.chipBg}`}>
-              <span className={`w-1.5 h-1.5 rounded-full animate-pulse`} style={{ background: accentHex }}></span>
-              Live Dashboard
-            </div>
-            <h1 className={`text-2xl font-bold ${t.textMain}`}>System Overview</h1>
-            <p className={`${t.textMuted} mt-1 text-sm`}>Monitor your GreenSort network activity</p>
+            <h1 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>System Overview</h1>
+            <p className={`${t.textMuted} mt-1 font-medium text-sm`}>Monitor your GreenSort network activity</p>
           </div>
 
           {/* Stat Cards */}
@@ -146,7 +142,8 @@ const Dashboard = () => {
             <ThemedCard>
               <div className="flex items-center justify-between mb-5">
                 <h3 className={`text-sm font-semibold ${t.textMain}`}>Material Breakdown</h3>
-                <span className={`text-[10px] font-semibold px-2 py-1 rounded-lg ${t.chipBg}`}>This Week</span>
+                {/* INUPDATE DITO */}
+                <span className={`text-[10px] font-semibold px-2 py-1 rounded-lg ${t.chipBg} ${isLightMode ? 'text-black' : 'text-white'}`}>This Week</span>
               </div>
               <div className="flex items-center gap-5">
                 <div className="relative w-24 h-24 flex-shrink-0">
@@ -201,7 +198,8 @@ const Dashboard = () => {
                 <h3 className={`text-sm font-semibold ${t.textMain}`}>Collection Output</h3>
                 <p className={`text-[11px] ${t.textMuted} mt-0.5`}>Waste collected in kg per day</p>
               </div>
-              <span className={`text-[10px] font-semibold px-3 py-1.5 rounded-xl border ${t.chipBg} ${isLightMode ? 'border-[#D8EDDF]' : 'border-[#52B788]/15'}`}>This Week</span>
+              {/* INUPDATE DITO */}
+              <span className={`text-[10px] font-semibold px-3 py-1.5 rounded-xl border ${t.chipBg} ${isLightMode ? 'border-[#D8EDDF] text-black' : 'border-[#52B788]/15 text-white'}`}>This Week</span>
             </div>
 
             <div className="flex h-56 relative" onMouseLeave={() => setActiveIndex(null)}>

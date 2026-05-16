@@ -152,7 +152,7 @@ export default function AdminAccess() {
 
       if (invErr) throw invErr;
 
-      // Also create the admin_users record immediately (they can set password via invite link)
+      // Also create the admin_users record immediately
       const { error: adminErr } = await supabase
         .from('admin_users')
         .insert({
@@ -172,7 +172,7 @@ export default function AdminAccess() {
         metadata: { token_id: inv.id, role: inviteRole },
       });
 
-      // Send invite email (using EmailJS)
+      // Send invite email
       const inviteLink = `${window.location.origin}/admin-setup?token=${inv.token}`;
       await emailjs.send(
         'service_nzpn1cn',
@@ -385,11 +385,11 @@ export default function AdminAccess() {
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
-                            <th className="px-6 py-3 font-bold">Admin</th>
-                            <th className="px-6 py-3 font-bold">Role</th>
-                            <th className="px-6 py-3 font-bold">Status</th>
-                            <th className="px-6 py-3 font-bold">Joined</th>
-                            {isSuperAdmin && <th className="px-6 py-3 font-bold text-right">Actions</th>}
+                            <th className="px-6 py-3 font-bold w-[35%]">Admin</th>
+                            <th className="px-6 py-3 font-bold w-[20%]">Role</th>
+                            <th className="px-6 py-3 font-bold w-[15%]">Status</th>
+                            <th className="px-6 py-3 font-bold w-[15%]">Joined</th>
+                            {isSuperAdmin && <th className="px-6 py-3 font-bold text-right w-[15%]">Actions</th>}
                           </tr>
                         </thead>
                         <tbody>
@@ -404,6 +404,7 @@ export default function AdminAccess() {
                               timeAgo={timeAgo}
                               onToggleActive={handleToggleActive}
                               onRoleChange={handleRoleChange}
+                              showActions={isSuperAdmin} // Conditionally render the 5th row cell based on the header state
                             />
                           ))}
                         </tbody>
@@ -425,11 +426,11 @@ export default function AdminAccess() {
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
-                            <th className="px-6 py-3 font-bold">Admin</th>
-                            <th className="px-6 py-3 font-bold">Role</th>
-                            <th className="px-6 py-3 font-bold">Status</th>
-                            <th className="px-6 py-3 font-bold">Joined</th>
-                            <th className="px-6 py-3 font-bold text-right">Actions</th>
+                            <th className="px-6 py-3 font-bold w-[35%]">Admin</th>
+                            <th className="px-6 py-3 font-bold w-[20%]">Role</th>
+                            <th className="px-6 py-3 font-bold w-[15%]">Status</th>
+                            <th className="px-6 py-3 font-bold w-[15%]">Joined</th>
+                            <th className="px-6 py-3 font-bold text-right w-[15%]">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -444,6 +445,7 @@ export default function AdminAccess() {
                               timeAgo={timeAgo}
                               onToggleActive={handleToggleActive}
                               onRoleChange={handleRoleChange}
+                              showActions={true} // Unconditionally render the 5th cell to match the header
                             />
                           ))}
                         </tbody>
@@ -733,13 +735,13 @@ export default function AdminAccess() {
 }
 
 // ── Table row sub-component ───────────────────────────────────────────────────
-function AdminRow({ admin, currentAdmin, isSuperAdmin, isLightMode, t, timeAgo, onToggleActive, onRoleChange }) {
+function AdminRow({ admin, currentAdmin, isSuperAdmin, isLightMode, t, timeAgo, onToggleActive, onRoleChange, showActions }) {
   const isSelf = admin.id === currentAdmin?.id;
   return (
     <tr className={`border-b text-sm transition-colors ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'}`}>
       <td className="px-6 py-4">
         <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-black ${
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
             admin.role === 'super_admin'
               ? (isLightMode ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/15 text-amber-400')
               : (isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C]' : 'bg-[#2CD87D]/10 text-[#2CD87D]')
@@ -764,37 +766,39 @@ function AdminRow({ admin, currentAdmin, isSuperAdmin, isLightMode, t, timeAgo, 
       <td className={`px-6 py-4 text-xs ${t.textMuted}`}>
         {timeAgo(admin.created_at)}
       </td>
-      <td className="px-6 py-4 text-right">
-        <div className="flex items-center justify-end gap-2">
-          {/* Role toggle (super_admin only, cannot change own role) */}
-          {isSuperAdmin && !isSelf && (
-            <button
-              onClick={() => onRoleChange(admin, admin.role === 'super_admin' ? 'admin' : 'super_admin')}
-              className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                admin.role === 'super_admin'
-                  ? (isLightMode ? 'text-amber-600 border-amber-200 hover:bg-amber-50' : 'text-amber-400 border-amber-500/20 hover:bg-amber-500/10')
-                  : (isLightMode ? 'text-[#4A7D5C] border-[#98BAA3]/30 hover:bg-[#E4EFE8]' : 'text-[#2CD87D] border-[#2CD87D]/20 hover:bg-[#2CD87D]/10')
-              }`}
-            >
-              {admin.role === 'super_admin' ? '↓ Demote' : '↑ Promote'}
-            </button>
-          )}
-          {/* Deactivate / Reactivate */}
-          {!isSelf && (isSuperAdmin || admin.role === 'admin') && (
-            <button
-              onClick={() => onToggleActive(admin)}
-              className={`p-2 rounded-lg transition-all ${t.textMuted} ${admin.is_active ? 'hover:text-orange-400 hover:bg-orange-500/10' : 'hover:text-[#2CD87D] hover:bg-[#2CD87D]/10'}`}
-              title={admin.is_active ? 'Deactivate' : 'Reactivate'}
-            >
-              {admin.is_active ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" /></svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-              )}
-            </button>
-          )}
-        </div>
-      </td>
+      {showActions && (
+        <td className="px-6 py-4 text-right">
+          <div className="flex items-center justify-end gap-2">
+            {/* Role toggle (super_admin only, cannot change own role) */}
+            {isSuperAdmin && !isSelf && (
+              <button
+                onClick={() => onRoleChange(admin, admin.role === 'super_admin' ? 'admin' : 'super_admin')}
+                className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                  admin.role === 'super_admin'
+                    ? (isLightMode ? 'text-amber-600 border-amber-200 hover:bg-amber-50' : 'text-amber-400 border-amber-500/20 hover:bg-amber-500/10')
+                    : (isLightMode ? 'text-[#4A7D5C] border-[#98BAA3]/30 hover:bg-[#E4EFE8]' : 'text-[#2CD87D] border-[#2CD87D]/20 hover:bg-[#2CD87D]/10')
+                }`}
+              >
+                {admin.role === 'super_admin' ? '↓ Demote' : '↑ Promote'}
+              </button>
+            )}
+            {/* Deactivate / Reactivate */}
+            {!isSelf && (isSuperAdmin || admin.role === 'admin') && (
+              <button
+                onClick={() => onToggleActive(admin)}
+                className={`p-2 rounded-lg transition-all ${t.textMuted} ${admin.is_active ? 'hover:text-orange-400 hover:bg-orange-500/10' : 'hover:text-[#2CD87D] hover:bg-[#2CD87D]/10'}`}
+                title={admin.is_active ? 'Deactivate' : 'Reactivate'}
+              >
+                {admin.is_active ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" /></svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                )}
+              </button>
+            )}
+          </div>
+        </td>
+      )}
     </tr>
   );
 }
