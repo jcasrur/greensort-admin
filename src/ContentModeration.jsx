@@ -3,21 +3,25 @@ import { supabase } from './supabase';
 import Sidebar from './Sidebar';
 import { useTheme } from './ThemeContext';
 
+// Thresholds for auto-ban (counted ONLY from approved/resolved reports)
+const POST_REPORT_BAN_THRESHOLD = 3;
+const COMMENT_REPORT_BAN_THRESHOLD = 5;
+
 export default function ContentModeration() {
   const { isLightMode, t } = useTheme();
 
   const [activeTab, setActiveTab] = useState('all_posts');
+  const [reportsSubTab, setReportsSubTab] = useState('user'); // 'user' | 'ai'
   const [posts, setPosts] = useState([]);
   const [reports, setReports] = useState([]);
+  const [aiFlagged, setAiFlagged] = useState([]);
   const [commentReports, setCommentReports] = useState([]);
-  const [userReports, setUserReports] = useState([]);
   const [appeals, setAppeals] = useState([]);
   const [reportHistory, setReportHistory] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [selectedReportDetails, setSelectedReportDetails] = useState(null);
   const [viewImage, setViewImage] = useState(null);
-  const [banModal, setBanModal] = useState(null);
 
   const txtMain = isLightMode ? 'text-[#1A2A1A]' : 'text-[#E8F0E5]';
   const txtSub = isLightMode ? 'text-[#2D4A38]' : 'text-[#C4D9CC]';
@@ -25,9 +29,11 @@ export default function ContentModeration() {
 
   useEffect(() => {
     if (activeTab === 'all_posts') fetchPosts();
-    else if (activeTab === 'reports') fetchReports();
+    else if (activeTab === 'reports') {
+      fetchReports();
+      fetchAiFlagged();
+    }
     else if (activeTab === 'reported_comments') fetchCommentReports();
-    else if (activeTab === 'reported_users') fetchUserReports();
     else if (activeTab === 'appeals') fetchAppeals();
     else if (activeTab === 'report_history') fetchReportHistory();
   }, [activeTab]);
@@ -97,6 +103,136 @@ export default function ContentModeration() {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // AUTO MODERATION HELPERS
+  // -------------------------------------------------------------------------
+
+  // Send a warning notification to the user whose post/comment was reported.
+  // Per spec: "lahat ng post/comment report = warning agad sa post/comment owner"
+  const sendWarning = async ({ ownerName, kind, snippet }) => {
+    if (!ownerName) return;
+
+    const where = kind === 'comment' ? 'comment' : 'post';
+    const preview = snippet
+      ? ` ("${String(snippet).substring(0, 60)}${String(snippet).length > 60 ? '…' : ''}")`
+      : '';
+
+    await sendNotification({
+      owner_name: ownerName,
+      actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=F59E0B&color=fff',
+      action: `sent you a warning. One of your ${where}s${preview} was reported by another user. Please review the community guidelines — repeated violations may lead to an account ban.`,
+      post_title: 'Account Warning',
+    });
+  };
+
+  // Count APPROVED/RESOLVED reports against a user and auto-ban if threshold hit.
+  //   - "user" here = display_name / full_name found in posts.user or comments.user_name
+  //   - Resolved post_reports counted by joining posts.user == userName
+  //   - Resolved comment_reports counted by joining comments.user_name == userName
+  // Returns true if the user was banned in this call.
+  const checkAndAutoBan = async (userName) => {
+    if (!userName) return false;
+
+    try {
+      // Skip if already banned
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('status')
+        .eq('full_name', userName)
+        .maybeSingle();
+
+      if (profile?.status === 'Banned') return false;
+
+      // --- Count approved POST reports against this user ---
+      const { data: postR, error: postErr } = await supabase
+        .from('post_reports')
+        .select('id, posts!inner(user)')
+        .eq('status', 'Resolved')
+        .eq('posts.user', userName);
+
+      if (postErr) {
+        console.warn('checkAndAutoBan post count error:', postErr.message);
+      }
+
+      const approvedPostReports = (postR || []).length;
+
+      // --- Count approved COMMENT reports against this user ---
+      const { data: commentR, error: commentErr } = await supabase
+        .from('comment_reports')
+        .select('id, comments!inner(user_name)')
+        .eq('status', 'Resolved')
+        .eq('comments.user_name', userName);
+
+      if (commentErr) {
+        console.warn('checkAndAutoBan comment count error:', commentErr.message);
+      }
+
+      const approvedCommentReports = (commentR || []).length;
+
+      const shouldBan =
+        approvedPostReports >= POST_REPORT_BAN_THRESHOLD ||
+        approvedCommentReports >= COMMENT_REPORT_BAN_THRESHOLD;
+
+      if (!shouldBan) return false;
+
+      // --- Auto-ban: set profile to Banned ---
+      const { error: banError } = await supabase
+        .from('profiles')
+        .update({ status: 'Banned' })
+        .eq('full_name', userName);
+
+      if (banError) {
+        console.warn('Auto-ban failed:', banError.message);
+        return false;
+      }
+
+      // --- Auto-resolve ALL pending reports tied to this user ---
+      const { data: pendingPostR } = await supabase
+        .from('post_reports')
+        .select('id, posts!inner(user)')
+        .eq('status', 'Pending')
+        .eq('posts.user', userName);
+
+      if (pendingPostR && pendingPostR.length > 0) {
+        const ids = pendingPostR.map((r) => r.id);
+        await supabase.from('post_reports').update({ status: 'Resolved' }).in('id', ids);
+      }
+
+      const { data: pendingCommentR } = await supabase
+        .from('comment_reports')
+        .select('id, comments!inner(user_name)')
+        .eq('status', 'Pending')
+        .eq('comments.user_name', userName);
+
+      if (pendingCommentR && pendingCommentR.length > 0) {
+        const ids = pendingCommentR.map((r) => r.id);
+        await supabase.from('comment_reports').update({ status: 'Resolved' }).in('id', ids);
+      }
+
+      // Notify the banned user
+      const reason =
+        approvedPostReports >= POST_REPORT_BAN_THRESHOLD
+          ? `${approvedPostReports} of your posts were confirmed as violating community guidelines`
+          : `${approvedCommentReports} of your comments were confirmed as violating community guidelines`;
+
+      await sendNotification({
+        owner_name: userName,
+        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
+        action: `automatically banned your account. Reason: ${reason}. All pending reports against you have been closed.`,
+        post_title: 'Account Banned',
+      });
+
+      return true;
+    } catch (e) {
+      console.error('checkAndAutoBan error:', e);
+      return false;
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // FETCHERS
+  // -------------------------------------------------------------------------
+
   const fetchPosts = async () => {
     setLoading(true);
 
@@ -108,7 +244,13 @@ export default function ContentModeration() {
 
       if (error) throw error;
 
-      const mapped = (data || []).map((post) => {
+      // Hide AI-flagged posts from the All Posts feed.
+      // (Detected by: status === 'flagged' AND ai_reason is set.)
+      const visiblePosts = (data || []).filter(
+        (p) => !(p.status === 'flagged' && p.ai_reason && String(p.ai_reason).trim().length > 0)
+      );
+
+      const mapped = visiblePosts.map((post) => {
         const authorName = post.user || 'Unknown User';
         const initials =
           authorName !== 'Unknown User'
@@ -159,6 +301,35 @@ export default function ContentModeration() {
     }
   };
 
+  // Posts that the AI flagged (status='flagged' AND ai_reason set).
+  // Shown in its own AI Flagged tab.
+  const fetchAiFlagged = async () => {
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*')
+        .eq('status', 'flagged')
+        .not('ai_reason', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Extra safety: filter out empty-string ai_reason
+      const filtered = (data || []).filter(
+        (p) => p.ai_reason && String(p.ai_reason).trim().length > 0
+      );
+
+      setAiFlagged(filtered);
+    } catch (e) {
+      console.error('fetchAiFlagged error:', e);
+      setAiFlagged([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchCommentReports = async () => {
     setLoading(true);
 
@@ -175,53 +346,6 @@ export default function ContentModeration() {
     } catch (e) {
       console.error('fetchCommentReports error:', e);
       setCommentReports([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchUserReports = async () => {
-    setLoading(true);
-
-    try {
-      const { data: reportsData, error } = await supabase
-        .from('user_reports')
-        .select('*')
-        .eq('status', 'Pending')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      if (reportsData && reportsData.length > 0) {
-        const names = [...new Set(reportsData.map((r) => r.reported_user).filter(Boolean))];
-
-        let avatarMap = {};
-
-        if (names.length > 0) {
-          const { data: profiles } = await supabase
-            .from('profiles')
-            .select('full_name, avatar_url')
-            .in('full_name', names);
-
-          if (profiles) {
-            profiles.forEach((p) => {
-              avatarMap[p.full_name] = p.avatar_url;
-            });
-          }
-        }
-
-        setUserReports(
-          reportsData.map((r) => ({
-            ...r,
-            reported_avatar: avatarMap[r.reported_user] || null,
-          }))
-        );
-      } else {
-        setUserReports([]);
-      }
-    } catch (e) {
-      console.error('fetchUserReports error:', e);
-      setUserReports([]);
     } finally {
       setLoading(false);
     }
@@ -296,10 +420,11 @@ export default function ContentModeration() {
           .neq('status', 'Pending')
           .order('created_at', { ascending: false }),
 
+        // Still surface legacy user_reports here so admins can see them in history,
+        // even though the dedicated tab has been removed.
         supabase
           .from('user_reports')
           .select('*')
-          .neq('status', 'Pending')
           .order('created_at', { ascending: false }),
 
         supabase
@@ -311,35 +436,82 @@ export default function ContentModeration() {
 
       if (postErr) throw postErr;
       if (commentErr) throw commentErr;
-      if (userErr) throw userErr;
+      if (userErr) console.warn('user_reports fetch warning:', userErr.message);
       if (appealErr) throw appealErr;
 
-      const mappedPostReports = (postReports || []).map((r) => ({
-        id: `post-${r.id}`,
-        type: 'Post Report',
-        status: r.status || 'Resolved',
-        reporter: r.reporter_email || 'Unknown reporter',
-        reportedItem: r.posts?.title || 'Deleted post',
-        reportedBy: r.posts?.user || 'Unknown user',
-        reason: r.reason || 'No reason provided.',
-        created_at: r.created_at,
-      }));
+      const mappedPostReports = (postReports || []).map((r) => {
+        // AI-marked rows have reporter_email = 'GreenSort AI'.
+        const isAi = r.reporter_email === 'GreenSort AI';
 
-      const mappedCommentReports = (commentReportsData || []).map((r) => ({
-        id: `comment-${r.id}`,
-        type: 'Comment Report',
-        status: r.status || 'Resolved',
-        reporter: r.reporter_email || 'Unknown reporter',
-        reportedItem: r.comments?.text || 'Deleted comment',
-        reportedBy: r.comments?.user_name || 'Unknown user',
-        reason: r.reason || 'No reason provided.',
-        created_at: r.created_at,
-      }));
+        // The reason field may contain embedded post info (for cascade-safety):
+        //   [POST_TITLE:...] [POST_AUTHOR:...] <reason>
+        // Parse them out so history works even if the post was deleted.
+        let displayTitle = r.posts?.title;
+        let displayAuthor = r.posts?.user;
+        let displayReason = r.reason || 'No reason provided.';
+
+        if (r.reason) {
+          const titleMatch = r.reason.match(/\[POST_TITLE:([^\]]*)\]/);
+          const authorMatch = r.reason.match(/\[POST_AUTHOR:([^\]]*)\]/);
+
+          if (titleMatch && !displayTitle) displayTitle = titleMatch[1];
+          if (authorMatch && !displayAuthor) displayAuthor = authorMatch[1];
+
+          // Clean reason: remove the marker tags so users see only the actual reason.
+          displayReason = r.reason
+            .replace(/\[POST_TITLE:[^\]]*\]\s*/g, '')
+            .replace(/\[POST_AUTHOR:[^\]]*\]\s*/g, '')
+            .trim();
+        }
+
+        return {
+          id: `post-${r.id}`,
+          type: isAi ? 'AI Flag' : 'Post Report',
+          status: r.status || 'Resolved',
+          reporter: isAi ? 'GreenSort AI' : (r.reporter_email || 'Unknown reporter'),
+          reportedItem: displayTitle || 'Deleted post',
+          reportedBy: displayAuthor || 'Unknown user',
+          reason: displayReason,
+          created_at: r.created_at,
+        };
+      });
+
+      const mappedCommentReports = (commentReportsData || []).map((r) => {
+        // The reason field may contain embedded comment info (cascade-safety):
+        //   [COMMENT_TEXT:...] [COMMENT_AUTHOR:...] <reason>
+        let displayText = r.comments?.text;
+        let displayAuthor = r.comments?.user_name;
+        let displayReason = r.reason || 'No reason provided.';
+
+        if (r.reason) {
+          const textMatch = r.reason.match(/\[COMMENT_TEXT:([^\]]*)\]/);
+          const authorMatch = r.reason.match(/\[COMMENT_AUTHOR:([^\]]*)\]/);
+
+          if (textMatch && !displayText) displayText = textMatch[1];
+          if (authorMatch && !displayAuthor) displayAuthor = authorMatch[1];
+
+          displayReason = r.reason
+            .replace(/\[COMMENT_TEXT:[^\]]*\]\s*/g, '')
+            .replace(/\[COMMENT_AUTHOR:[^\]]*\]\s*/g, '')
+            .trim();
+        }
+
+        return {
+          id: `comment-${r.id}`,
+          type: 'Comment Report',
+          status: r.status || 'Resolved',
+          reporter: r.reporter_email || 'Unknown reporter',
+          reportedItem: displayText || 'Deleted comment',
+          reportedBy: displayAuthor || 'Unknown user',
+          reason: displayReason,
+          created_at: r.created_at,
+        };
+      });
 
       const mappedUserReports = (userReportsData || []).map((r) => ({
         id: `user-${r.id}`,
         type: 'User Report',
-        status: r.status || 'Resolved',
+        status: r.status || 'Pending',
         reporter: r.reporter_email || 'Unknown reporter',
         reportedItem: r.reported_user || 'Unknown user',
         reportedBy: r.reported_user || 'Unknown user',
@@ -374,6 +546,10 @@ export default function ContentModeration() {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // HANDLERS
+  // -------------------------------------------------------------------------
+
   const handleDeletePost = async (postId) => {
     if (!window.confirm('Delete this post? This cannot be undone.')) return;
 
@@ -390,22 +566,275 @@ export default function ContentModeration() {
     }
   };
 
-  const handleApproveReport = async (reportId, postId, reporterName, postTitle, reportReason) => {
+  // Delete an AI-flagged post AND warn the owner (counts toward auto-ban).
+  const handleDeleteAiFlaggedPost = async (post) => {
+    if (!post?.id) return;
+
+    if (!window.confirm(`Delete AI-flagged post "${post.title || 'this post'}"? Owner will be warned.`)) {
+      return;
+    }
+
+    console.log('[AI-DELETE] === Starting delete flow for post:', post.id, post.title);
+
+    try {
+      const aiReasonText = post.ai_reason || 'Violated community guidelines.';
+      const embedded = `[AI Auto-Flag — Deleted by admin] [POST_TITLE:${post.title || 'Untitled'}] [POST_AUTHOR:${post.user || 'Unknown'}] ${aiReasonText}`;
+
+      // 1) Insert log row into post_reports BEFORE deleting the post.
+      console.log('[AI-DELETE] Step 1: Inserting log row with post_id =', post.id);
+
+      const { data: insertedRows, error: insertError } = await supabase
+        .from('post_reports')
+        .insert([
+          {
+            post_id: post.id,
+            reporter_email: 'GreenSort AI',
+            reason: embedded,
+            status: 'Resolved',
+          },
+        ])
+        .select();
+
+      if (insertError) {
+        console.error('[AI-DELETE] ❌ Step 1 FAILED — log insert error:');
+        console.error('  message:', insertError.message);
+        console.error('  details:', insertError.details);
+        console.error('  hint:', insertError.hint);
+        console.error('  code:', insertError.code);
+        console.error('  full error object:', insertError);
+      } else {
+        console.log('[AI-DELETE] ✅ Step 1 OK — inserted rows:', insertedRows);
+      }
+
+      const insertedId = insertedRows?.[0]?.id;
+
+      // 2) Delete the post.
+      console.log('[AI-DELETE] Step 2: Deleting post', post.id);
+      const { error: deleteError } = await supabase.from('posts').delete().eq('id', post.id);
+
+      if (deleteError) {
+        console.error('[AI-DELETE] ❌ Step 2 FAILED — post delete error:', deleteError);
+        throw deleteError;
+      }
+      console.log('[AI-DELETE] ✅ Step 2 OK — post deleted');
+
+      // 3) Verify the log row survived (cascade check).
+      if (insertedId) {
+        console.log('[AI-DELETE] Step 3: Checking if log row', insertedId, 'survived...');
+
+        const { data: checkRow, error: checkError } = await supabase
+          .from('post_reports')
+          .select('id, post_id, reporter_email, status')
+          .eq('id', insertedId)
+          .maybeSingle();
+
+        if (checkError) {
+          console.warn('[AI-DELETE] Step 3 check error:', checkError);
+        }
+
+        if (!checkRow) {
+          console.warn('[AI-DELETE] ⚠️ Step 3: Log row VANISHED (FK cascade deleted it). Re-inserting without post_id...');
+
+          const { data: relogData, error: relogError } = await supabase
+            .from('post_reports')
+            .insert([
+              {
+                post_id: null,
+                reporter_email: 'GreenSort AI',
+                reason: embedded,
+                status: 'Resolved',
+              },
+            ])
+            .select();
+
+          if (relogError) {
+            console.error('[AI-DELETE] ❌ Step 3 RE-INSERT FAILED:');
+            console.error('  message:', relogError.message);
+            console.error('  details:', relogError.details);
+            console.error('  hint:', relogError.hint);
+            console.error('  code:', relogError.code);
+            console.error('  full error:', relogError);
+            console.error('  → If code is "23502", post_id is NOT NULL in your schema.');
+            console.error('  → Fix: ALTER TABLE post_reports ALTER COLUMN post_id DROP NOT NULL;');
+          } else {
+            console.log('[AI-DELETE] ✅ Step 3 RE-INSERT OK — relogged with post_id=null:', relogData);
+          }
+        } else {
+          console.log('[AI-DELETE] ✅ Step 3 OK — log row survived:', checkRow);
+        }
+      } else {
+        console.warn('[AI-DELETE] Step 3 skipped — no inserted ID to check (Step 1 failed)');
+      }
+
+      // 4) Notify owner.
+      console.log('[AI-DELETE] Step 4: Sending warning notification to:', post.user);
+      await sendNotification({
+        owner_name: post.user,
+        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
+        action: `removed your post after reviewing an AI flag. Reason: ${aiReasonText} Repeated violations may lead to an account ban.`,
+        post_title: post.title || 'Your post',
+      });
+
+      // 5) Check auto-ban threshold.
+      console.log('[AI-DELETE] Step 5: Checking auto-ban threshold for:', post.user);
+      const banned = await checkAndAutoBan(post.user);
+      console.log('[AI-DELETE] Step 5 result — banned:', banned);
+
+      console.log('[AI-DELETE] === Flow complete ===');
+
+      alert(
+        banned
+          ? `AI-flagged post deleted, owner warned, and ${post.user} was auto-banned.`
+          : 'AI-flagged post deleted and owner warned.'
+      );
+      fetchAiFlagged();
+      fetchPosts();
+    } catch (e) {
+      console.error('[AI-DELETE] ❌ Fatal error in handleDeleteAiFlaggedPost:', e);
+      alert('Error: ' + e.message);
+    }
+  };
+
+  // Keep the AI-flagged post hidden, but mark it as reviewed
+  // (clears it from this section by setting status to 'hidden').
+  const handleKeepAiFlaggedHidden = async (post) => {
+    if (!post?.id) return;
+
+    if (!window.confirm(`Keep "${post.title || 'this post'}" hidden? It stays off the public feed.`)) {
+      return;
+    }
+
+    try {
+      // Log the AI action into post_reports for Report History Logs.
+      // Embed post info in reason so history still works even if FK cascades.
+      const aiReasonText = post.ai_reason || 'Violated community guidelines.';
+      const embedded = `[AI Auto-Flag — Kept Hidden by admin] [POST_TITLE:${post.title || 'Untitled'}] [POST_AUTHOR:${post.user || 'Unknown'}] ${aiReasonText}`;
+
+      const { error: insertError } = await supabase.from('post_reports').insert([
+        {
+          post_id: post.id,
+          reporter_email: 'GreenSort AI',
+          reason: embedded,
+          status: 'Resolved',
+        },
+      ]);
+
+      if (insertError) {
+        console.warn('AI log insert failed:', insertError.message);
+      }
+
+      const { error } = await supabase
+        .from('posts')
+        .update({ status: 'hidden' })
+        .eq('id', post.id);
+
+      if (error) throw error;
+
+      await sendNotification({
+        owner_name: post.user,
+        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
+        action: `kept your AI-flagged post hidden after admin review. Reason: ${aiReasonText} You may appeal this decision.`,
+        post_title: post.title || 'Your post',
+      });
+
+      // Check auto-ban (this counts toward the 3-strike threshold).
+      const banned = await checkAndAutoBan(post.user);
+
+      alert(
+        banned
+          ? `Post kept hidden and ${post.user} was auto-banned.`
+          : 'Post kept hidden.'
+      );
+      fetchAiFlagged();
+    } catch (e) {
+      console.error('handleKeepAiFlaggedHidden error:', e);
+      alert('Error: ' + e.message);
+    }
+  };
+
+  const handleApproveReport = async (
+    reportId,
+    postId,
+    reporterName,
+    postTitle,
+    reportReason,
+    postOwner,
+    postDesc
+  ) => {
     if (!window.confirm('Approve this report and DELETE the post?')) return;
 
     const note = `Thank you for reporting this post for "${reportReason}". We reviewed it, confirmed the violation, and removed the post.`;
 
-    try {
-      const { error: deleteError } = await supabase.from('posts').delete().eq('id', postId);
-      if (deleteError) throw deleteError;
+    console.log('[USER-APPROVE] === Starting flow for report:', reportId, 'post:', postId);
 
+    try {
+      // DEFENSIVE (same pattern as AI flag delete):
+      // If post_reports.post_id has ON DELETE CASCADE, deleting the post will
+      // also delete the report row -> no history log.
+      //
+      // FIX: Before deleting the post, update the report with status='Resolved'
+      // AND embed post info in the reason so it survives a cascade re-insert.
+
+      // 1) Embed post info in reason and mark Resolved BEFORE deletion.
+      const embeddedReason = `[POST_TITLE:${postTitle || 'Untitled'}] [POST_AUTHOR:${postOwner || 'Unknown'}] ${reportReason || 'No reason provided.'}`;
+
+      console.log('[USER-APPROVE] Step 1: Marking report as Resolved + embedding info');
       const { error: reportError } = await supabase
         .from('post_reports')
-        .update({ status: 'Resolved' })
+        .update({ status: 'Resolved', reason: embeddedReason })
         .eq('id', reportId);
 
-      if (reportError) throw reportError;
+      if (reportError) {
+        console.error('[USER-APPROVE] ❌ Step 1 FAILED:', reportError);
+        throw reportError;
+      }
+      console.log('[USER-APPROVE] ✅ Step 1 OK');
 
+      // 2) Delete the post.
+      console.log('[USER-APPROVE] Step 2: Deleting post', postId);
+      const { error: deleteError } = await supabase.from('posts').delete().eq('id', postId);
+      if (deleteError) {
+        console.error('[USER-APPROVE] ❌ Step 2 FAILED:', deleteError);
+        throw deleteError;
+      }
+      console.log('[USER-APPROVE] ✅ Step 2 OK');
+
+      // 3) Verify the report row survived. If cascade wiped it, re-insert.
+      console.log('[USER-APPROVE] Step 3: Checking if report row', reportId, 'survived...');
+      const { data: checkRow } = await supabase
+        .from('post_reports')
+        .select('id')
+        .eq('id', reportId)
+        .maybeSingle();
+
+      if (!checkRow) {
+        console.warn('[USER-APPROVE] ⚠️ Report row was CASCADE-DELETED. Re-inserting with post_id=null...');
+
+        const { data: relogData, error: relogError } = await supabase
+          .from('post_reports')
+          .insert([
+            {
+              post_id: null,
+              reporter_email: reporterName,
+              reason: embeddedReason,
+              status: 'Resolved',
+            },
+          ])
+          .select();
+
+        if (relogError) {
+          console.error('[USER-APPROVE] ❌ Step 3 RE-INSERT FAILED:');
+          console.error('  message:', relogError.message);
+          console.error('  code:', relogError.code);
+          console.error('  full error:', relogError);
+        } else {
+          console.log('[USER-APPROVE] ✅ Step 3 RE-INSERT OK:', relogData);
+        }
+      } else {
+        console.log('[USER-APPROVE] ✅ Step 3 OK — report row survived');
+      }
+
+      // 4) Notify the reporter
       await sendNotification({
         owner_name: reporterName,
         actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=2D6A4F&color=fff',
@@ -413,33 +842,68 @@ export default function ContentModeration() {
         post_title: postTitle || 'Reported Post',
       });
 
-      alert('Post deleted and report resolved!');
+      // 5) Send a warning to the post owner (confirmed violation)
+      await sendWarning({
+        ownerName: postOwner,
+        kind: 'post',
+        snippet: postTitle || postDesc,
+      });
+
+      // 6) Check if the post owner has hit the auto-ban threshold
+      const banned = await checkAndAutoBan(postOwner);
+
+      console.log('[USER-APPROVE] === Flow complete ===');
+
+      alert(
+        banned
+          ? `Post deleted, report resolved, and ${postOwner} was auto-banned.`
+          : 'Post deleted and report resolved!'
+      );
       fetchReports();
       fetchPosts();
     } catch (e) {
-      console.error('handleApproveReport error:', e);
+      console.error('[USER-APPROVE] ❌ Fatal error:', e);
       alert('Error: ' + e.message);
     }
   };
 
-  const handleDeclineReport = async (reportId, reporterName, postTitle, reportReason) => {
+  const handleDeclineReport = async (
+    reportId,
+    reporterName,
+    postTitle,
+    reportReason,
+    postOwner,
+    postDesc
+  ) => {
     if (!window.confirm('Decline this report? Post stays active.')) return;
 
     const note = `We reviewed your report on "${reportReason}". This post does not violate our standards at this time.`;
 
     try {
+      // Embed post info in reason so history still has it even if the post
+      // is later deleted (defensive for ON DELETE CASCADE).
+      const embeddedReason = `[POST_TITLE:${postTitle || 'Untitled'}] [POST_AUTHOR:${postOwner || 'Unknown'}] ${reportReason || 'No reason provided.'}`;
+
       const { error } = await supabase
         .from('post_reports')
-        .update({ status: 'Resolved' })
+        .update({ status: 'Resolved', reason: embeddedReason })
         .eq('id', reportId);
 
       if (error) throw error;
 
+      // Notify the reporter
       await sendNotification({
         owner_name: reporterName,
         actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
         action: `declined your report. Note: ${note}`,
         post_title: postTitle || 'Reported Post',
+      });
+
+      // Per spec: warning is sent to the owner whenever a report is reviewed
+      await sendWarning({
+        ownerName: postOwner,
+        kind: 'post',
+        snippet: postTitle || postDesc,
       });
 
       alert('Report dismissed!');
@@ -453,7 +917,8 @@ export default function ContentModeration() {
   const handleDeleteComment = async (report) => {
     const comment = report.comments;
     const commentId = comment?.id || report.comment_id;
-    const commentText = comment?.text || 'The reported comment text is no longer available.';
+    const commentText =
+      comment?.text || 'The reported comment text is no longer available.';
     const commenterName = comment?.user_name || 'a user';
 
     if (!commentId) {
@@ -465,32 +930,76 @@ export default function ContentModeration() {
       return;
     }
 
+    console.log('[COMMENT-DELETE] === Starting flow for report:', report.id, 'comment:', commentId);
+
     try {
+      // DEFENSIVE: same cascade-safe pattern as post deletion.
+      // Embed comment info in reason BEFORE deleting the comment.
+      const originalReason = report.reason || 'No reason provided.';
+      const embeddedReason = `[COMMENT_TEXT:${commentText}] [COMMENT_AUTHOR:${commenterName}] ${originalReason}`;
+
+      // 1) Mark report as Resolved + embed info.
+      console.log('[COMMENT-DELETE] Step 1: Marking report Resolved + embedding info');
       const { error: reportUpdateError } = await supabase
         .from('comment_reports')
-        .update({ status: 'Resolved' })
+        .update({ status: 'Resolved', reason: embeddedReason })
         .eq('id', report.id);
 
-      if (reportUpdateError) throw reportUpdateError;
+      if (reportUpdateError) {
+        console.error('[COMMENT-DELETE] ❌ Step 1 FAILED:', reportUpdateError);
+        throw reportUpdateError;
+      }
+      console.log('[COMMENT-DELETE] ✅ Step 1 OK');
 
+      // 2) Delete the comment.
+      console.log('[COMMENT-DELETE] Step 2: Deleting comment', commentId);
       const { error: commentDeleteError } = await supabase
         .from('comments')
         .delete()
         .eq('id', commentId);
 
       if (commentDeleteError) {
-        console.warn('First comment delete failed:', commentDeleteError.message);
+        console.error('[COMMENT-DELETE] ❌ Step 2 FAILED:', commentDeleteError);
+        throw commentDeleteError;
+      }
+      console.log('[COMMENT-DELETE] ✅ Step 2 OK');
 
-        await supabase.from('comment_reports').delete().eq('id', report.id);
+      // 3) Verify the report row survived. If cascade wiped it, re-insert.
+      console.log('[COMMENT-DELETE] Step 3: Checking if report row', report.id, 'survived...');
+      const { data: checkRow } = await supabase
+        .from('comment_reports')
+        .select('id')
+        .eq('id', report.id)
+        .maybeSingle();
 
-        const { error: retryDeleteError } = await supabase
-          .from('comments')
-          .delete()
-          .eq('id', commentId);
+      if (!checkRow) {
+        console.warn('[COMMENT-DELETE] ⚠️ Report row was CASCADE-DELETED. Re-inserting with comment_id=null...');
 
-        if (retryDeleteError) throw retryDeleteError;
+        const { data: relogData, error: relogError } = await supabase
+          .from('comment_reports')
+          .insert([
+            {
+              comment_id: null,
+              reporter_email: report.reporter_email,
+              reason: embeddedReason,
+              status: 'Resolved',
+            },
+          ])
+          .select();
+
+        if (relogError) {
+          console.error('[COMMENT-DELETE] ❌ Step 3 RE-INSERT FAILED:');
+          console.error('  message:', relogError.message);
+          console.error('  code:', relogError.code);
+          console.error('  full error:', relogError);
+        } else {
+          console.log('[COMMENT-DELETE] ✅ Step 3 RE-INSERT OK:', relogData);
+        }
+      } else {
+        console.log('[COMMENT-DELETE] ✅ Step 3 OK — report row survived');
       }
 
+      // 4) Notify the reporter
       await sendNotification({
         owner_name: report.reporter_email,
         actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=2D6A4F&color=fff',
@@ -498,17 +1007,34 @@ export default function ContentModeration() {
         post_title: 'Reported Comment',
       });
 
-      alert('Comment deleted and report resolved.');
+      // 5) Send warning to the commenter
+      await sendWarning({
+        ownerName: commenterName,
+        kind: 'comment',
+        snippet: commentText,
+      });
+
+      // 6) Check auto-ban threshold (5 for comments)
+      const banned = await checkAndAutoBan(commenterName);
+
+      console.log('[COMMENT-DELETE] === Flow complete ===');
+
+      alert(
+        banned
+          ? `Comment deleted, report resolved, and ${commenterName} was auto-banned.`
+          : 'Comment deleted and report resolved.'
+      );
       fetchCommentReports();
     } catch (e) {
-      console.error('handleDeleteComment error:', e);
+      console.error('[COMMENT-DELETE] ❌ Fatal error:', e);
       alert('Error: ' + e.message);
     }
   };
 
   const handleDismissCommentReport = async (report) => {
     const comment = report.comments;
-    const commentText = comment?.text || 'The reported comment text is no longer available.';
+    const commentText =
+      comment?.text || 'The reported comment text is no longer available.';
     const commenterName = comment?.user_name || 'a user';
 
     if (!window.confirm('Dismiss this comment report? The comment will stay visible.')) {
@@ -516,9 +1042,13 @@ export default function ContentModeration() {
     }
 
     try {
+      // Embed comment info in reason so history shows it even if comment is later deleted.
+      const originalReason = report.reason || 'No reason provided.';
+      const embeddedReason = `[COMMENT_TEXT:${commentText}] [COMMENT_AUTHOR:${commenterName}] ${originalReason}`;
+
       const { error } = await supabase
         .from('comment_reports')
-        .update({ status: 'Resolved' })
+        .update({ status: 'Resolved', reason: embeddedReason })
         .eq('id', report.id);
 
       if (error) throw error;
@@ -530,88 +1060,17 @@ export default function ContentModeration() {
         post_title: 'Reported Comment',
       });
 
+      // Per spec: warning sent on every reviewed report
+      await sendWarning({
+        ownerName: commenterName,
+        kind: 'comment',
+        snippet: commentText,
+      });
+
       alert('Comment report dismissed.');
       fetchCommentReports();
     } catch (e) {
       console.error('handleDismissCommentReport error:', e);
-      alert('Error: ' + e.message);
-    }
-  };
-
-  const handleDismissUserReport = async (report) => {
-    if (!window.confirm('Dismiss this user report?')) return;
-
-    try {
-      const { error } = await supabase
-        .from('user_reports')
-        .update({ status: 'Resolved' })
-        .eq('id', report.id);
-
-      if (error) throw error;
-
-      await sendNotification({
-        owner_name: report.reporter_email,
-        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
-        action: `declined your report. Note: Your user report about ${report.reported_user || 'this user'} was reviewed and dismissed.`,
-        post_title: 'User Report',
-      });
-
-      alert('User report dismissed.');
-      fetchUserReports();
-    } catch (e) {
-      console.error('handleDismissUserReport error:', e);
-      alert('Error: ' + e.message);
-    }
-  };
-
-  const handleBanUser = async (report, actionType) => {
-    try {
-      if (actionType === 'ban') {
-        const confirmBan = window.confirm(
-          `Ban ${report.reported_user}? This will set their profile status to Banned.`
-        );
-
-        if (!confirmBan) return;
-
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({ status: 'Banned' })
-          .eq('full_name', report.reported_user);
-
-        if (profileError) throw profileError;
-
-        await sendNotification({
-          owner_name: report.reported_user,
-          actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
-          action: 'banned your account after reviewing a user report.',
-          post_title: 'Account Moderation',
-        });
-      }
-
-      if (actionType === 'warn') {
-        const confirmWarn = window.confirm(`Send a warning to ${report.reported_user}?`);
-        if (!confirmWarn) return;
-
-        await sendNotification({
-          owner_name: report.reported_user,
-          actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=F59E0B&color=fff',
-          action: 'sent you a warning after reviewing a user report. Please follow the community guidelines.',
-          post_title: 'Account Warning',
-        });
-      }
-
-      const { error: reportError } = await supabase
-        .from('user_reports')
-        .update({ status: 'Resolved' })
-        .eq('id', report.id);
-
-      if (reportError) throw reportError;
-
-      setBanModal(null);
-      alert(actionType === 'ban' ? 'User banned and report resolved.' : 'Warning sent and report resolved.');
-      fetchUserReports();
-    } catch (e) {
-      console.error('handleBanUser error:', e);
       alert('Error: ' + e.message);
     }
   };
@@ -680,6 +1139,10 @@ export default function ContentModeration() {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // STYLES
+  // -------------------------------------------------------------------------
+
   const cardBase = `rounded-2xl border overflow-hidden transition-all ${
     isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.05]'
   }`;
@@ -694,37 +1157,24 @@ export default function ContentModeration() {
           ? isLightMode
             ? 'bg-amber-50 border-amber-100'
             : 'bg-amber-500/5 border-amber-500/10'
-          : color === 'purple'
+          : color === 'orange'
             ? isLightMode
-              ? 'bg-violet-50 border-violet-100'
-              : 'bg-violet-500/5 border-violet-500/10'
-            : color === 'orange'
-              ? isLightMode
-                ? 'bg-orange-50 border-orange-100'
-                : 'bg-orange-500/5 border-orange-500/10'
-              : isLightMode
-                ? 'bg-[#F7F9F6] border-[#EDF0EB]'
-                : 'bg-white/[0.02] border-white/[0.04]'
+              ? 'bg-orange-50 border-orange-100'
+              : 'bg-orange-500/5 border-orange-500/10'
+            : isLightMode
+              ? 'bg-[#F7F9F6] border-[#EDF0EB]'
+              : 'bg-white/[0.02] border-white/[0.04]'
     }`;
-
-  const iconColor = {
-    red: 'text-red-500',
-    yellow: 'text-amber-500',
-    purple: 'text-violet-500',
-    orange: 'text-orange-500',
-  };
 
   const reporterText = {
     red: isLightMode ? 'text-red-600' : 'text-red-400',
     yellow: isLightMode ? 'text-amber-700' : 'text-amber-400',
-    purple: isLightMode ? 'text-violet-700' : 'text-violet-400',
     orange: isLightMode ? 'text-orange-700' : 'text-orange-400',
   };
 
   const reasonText = {
     red: isLightMode ? 'text-red-700' : 'text-red-300',
     yellow: isLightMode ? 'text-amber-800' : 'text-amber-200',
-    purple: isLightMode ? 'text-violet-700' : 'text-violet-200',
     orange: isLightMode ? 'text-orange-800' : 'text-orange-200',
   };
 
@@ -750,9 +1200,8 @@ export default function ContentModeration() {
 
   const tabs = [
     { key: 'all_posts', label: 'All Posts', count: 0 },
-    { key: 'reports', label: 'Reported Posts', count: reports.length },
+    { key: 'reports', label: 'Reported Posts', count: reports.length + aiFlagged.length },
     { key: 'reported_comments', label: 'Reported Comments', count: commentReports.length },
-    { key: 'reported_users', label: 'Reported Person', count: userReports.length },
     { key: 'appeals', label: 'Appeals', count: appeals.length },
     { key: 'report_history', label: 'Report History Logs', count: reportHistory.length },
   ];
@@ -768,11 +1217,71 @@ export default function ContentModeration() {
       </span>
     ) : null;
 
+
+  const escapeCSV = (value) => {
+    if (value === null || value === undefined) return '';
+
+    const stringValue = String(value).replace(/"/g, '""');
+    return `"${stringValue}"`;
+  };
+
+  const handleDownloadReportHistory = () => {
+    if (!reportHistory || reportHistory.length === 0) {
+      alert('No report history logs to download.');
+      return;
+    }
+
+    const headers = [
+      'Log ID',
+      'Type',
+      'Status',
+      'Reporter',
+      'Reported Item',
+      'Reported User / Content Owner',
+      'Reason',
+      'Date Created',
+    ];
+
+    const rows = reportHistory.map((log) => [
+      log.id,
+      log.type,
+      log.status,
+      log.reporter,
+      log.reportedItem,
+      log.reportedBy,
+      log.reason,
+      log.created_at ? new Date(log.created_at).toLocaleString() : '',
+    ]);
+
+    const csvContent = [
+      headers.map(escapeCSV).join(','),
+      ...rows.map((row) => row.map(escapeCSV).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csvContent], {
+      type: 'text/csv;charset=utf-8;',
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const today = new Date().toISOString().split('T')[0];
+
+    link.href = url;
+    link.download = `greensort-report-history-logs-${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  };
+
   const refreshCurrentTab = () => {
     if (activeTab === 'all_posts') fetchPosts();
-    else if (activeTab === 'reports') fetchReports();
+    else if (activeTab === 'reports') {
+      fetchReports();
+      fetchAiFlagged();
+    }
     else if (activeTab === 'reported_comments') fetchCommentReports();
-    else if (activeTab === 'reported_users') fetchUserReports();
     else if (activeTab === 'appeals') fetchAppeals();
     else if (activeTab === 'report_history') fetchReportHistory();
   };
@@ -823,24 +1332,59 @@ export default function ContentModeration() {
                   ? 'Pending Post Reports'
                   : activeTab === 'reported_comments'
                     ? 'Pending Comment Reports'
-                    : activeTab === 'reported_users'
-                      ? 'Pending User Reports'
-                      : activeTab === 'appeals'
-                        ? 'Pending Post Appeals'
-                        : 'Report History Logs'}
+                    : activeTab === 'appeals'
+                      ? 'Pending Post Appeals'
+                      : 'Report History Logs'}
             </h2>
 
-            <button
-              onClick={refreshCurrentTab}
-              className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${t.accentText} ${
+            <div className="flex items-center gap-2">
+              {activeTab === 'report_history' && (
+                <button
+                  onClick={handleDownloadReportHistory}
+                  disabled={reportHistory.length === 0}
+                  className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${
+                    reportHistory.length === 0
+                      ? isLightMode
+                        ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'border-white/[0.05] bg-white/[0.03] text-white/30 cursor-not-allowed'
+                      : isLightMode
+                        ? 'border-[#A8CFBA] bg-[#2D6A4F] text-white hover:bg-[#24583F]'
+                        : 'border-[#52B788]/25 bg-[#52B788]/15 text-[#52B788] hover:bg-[#52B788]/25'
+                  }`}
+                >
+                  Download Logs
+                </button>
+              )}
+
+              <button
+                onClick={refreshCurrentTab}
+                className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${t.accentText} ${
+                  isLightMode
+                    ? 'border-[#A8CFBA] bg-[#D8EDDF] hover:bg-[#C4E0CF]'
+                    : 'border-[#52B788]/25 bg-[#52B788]/8 hover:bg-[#52B788]/15'
+                }`}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Auto-moderation info banner */}
+          {(activeTab === 'reports' || activeTab === 'reported_comments') && (
+            <div
+              className={`mb-5 p-3 rounded-xl border text-xs ${
                 isLightMode
-                  ? 'border-[#A8CFBA] bg-[#D8EDDF] hover:bg-[#C4E0CF]'
-                  : 'border-[#52B788]/25 bg-[#52B788]/8 hover:bg-[#52B788]/15'
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : 'bg-amber-500/5 border-amber-500/20 text-amber-300'
               }`}
             >
-              Refresh
-            </button>
-          </div>
+              <span className="font-bold">Auto-moderation active:</span>{' '}
+              Every reviewed report sends a warning to the content owner.
+              Users are auto-banned after <b>{POST_REPORT_BAN_THRESHOLD}</b> approved post reports
+              or <b>{COMMENT_REPORT_BAN_THRESHOLD}</b> approved comment reports. All their pending
+              reports auto-resolve.
+            </div>
+          )}
 
           {loading ? (
             <div
@@ -945,12 +1489,66 @@ export default function ContentModeration() {
               )}
 
               {activeTab === 'reports' && (
+                <>
+                  {/* Sub-tabs: User Reports vs AI Flagged */}
+                  <div
+                    className={`flex flex-wrap gap-1 p-1 rounded-xl border w-fit mb-5 ${
+                      isLightMode ? 'bg-[#F0F4EE] border-[#E3E8E1]' : 'bg-[#111814] border-white/[0.05]'
+                    }`}
+                  >
+                    <button
+                      onClick={() => setReportsSubTab('user')}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs transition-all duration-200 ${
+                        reportsSubTab === 'user'
+                          ? isLightMode
+                            ? 'bg-white text-red-600 shadow-sm font-semibold'
+                            : 'bg-[#1C2620] text-red-400 border border-red-500/20 font-semibold'
+                          : `${txtMuted} ${isLightMode ? 'hover:text-[#1A2A1A]' : 'hover:text-[#E8F0E5]'} font-medium`
+                      }`}
+                    >
+                      User Reports
+                      {reports.length > 0 && (
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                            isLightMode ? 'bg-red-100 text-red-600' : 'bg-red-500/15 text-red-400'
+                          }`}
+                        >
+                          {reports.length}
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => setReportsSubTab('ai')}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs transition-all duration-200 ${
+                        reportsSubTab === 'ai'
+                          ? isLightMode
+                            ? 'bg-white text-violet-700 shadow-sm font-semibold'
+                            : 'bg-[#1C2620] text-violet-400 border border-violet-500/20 font-semibold'
+                          : `${txtMuted} ${isLightMode ? 'hover:text-[#1A2A1A]' : 'hover:text-[#E8F0E5]'} font-medium`
+                      }`}
+                    >
+                      🤖 AI Flagged
+                      {aiFlagged.length > 0 && (
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                            isLightMode ? 'bg-violet-100 text-violet-700' : 'bg-violet-500/15 text-violet-400'
+                          }`}
+                        >
+                          {aiFlagged.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* USER REPORTS sub-content */}
+                  {reportsSubTab === 'user' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {reports.length === 0 ? (
                     <div className={`col-span-full p-10 text-center rounded-2xl border ${
                       isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'
                     } text-sm italic`}>
-                      No pending reports. All clear!
+                      No pending user reports. All clear!
                     </div>
                   ) : (
                     reports.map((report) => {
@@ -1021,14 +1619,33 @@ export default function ContentModeration() {
 
                           <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FDF8F8]' : 'bg-red-500/[0.03]'}`}>
                             <button
-                              onClick={() => handleApproveReport(report.id, report.post_id, report.reporter_email, post.title, report.reason)}
+                              onClick={() =>
+                                handleApproveReport(
+                                  report.id,
+                                  report.post_id,
+                                  report.reporter_email,
+                                  post.title,
+                                  report.reason,
+                                  post.user,
+                                  post.desc
+                                )
+                              }
                               className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-red-500 hover:bg-red-400"
                             >
                               Approve Report & Delete Post
                             </button>
 
                             <button
-                              onClick={() => handleDeclineReport(report.id, report.reporter_email, post.title, report.reason)}
+                              onClick={() =>
+                                handleDeclineReport(
+                                  report.id,
+                                  report.reporter_email,
+                                  post.title,
+                                  report.reason,
+                                  post.user,
+                                  post.desc
+                                )
+                              }
                               className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${
                                 isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'
                               }`}
@@ -1041,6 +1658,129 @@ export default function ContentModeration() {
                     })
                   )}
                 </div>
+                  )}
+
+                  {/* AI FLAGGED sub-content */}
+                  {reportsSubTab === 'ai' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {aiFlagged.length === 0 ? (
+                        <div className={`col-span-full p-10 text-center rounded-2xl border ${
+                          isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'
+                        } text-sm italic`}>
+                          No AI-flagged posts pending review.
+                        </div>
+                      ) : (
+                        aiFlagged.map((post) => {
+                          const aiReason = post.ai_reason || 'No AI reason recorded.';
+                          const isLong = aiReason.length > 80;
+
+                          return (
+                            <div
+                              key={`ai-${post.id}`}
+                              className={`${cardBase} flex flex-col border-violet-200/60 ${isLightMode ? '' : '!border-violet-500/20'}`}
+                            >
+                              <div
+                                className={`p-4 border-b flex items-start gap-3 ${
+                                  isLightMode
+                                    ? 'bg-violet-50 border-violet-100'
+                                    : 'bg-violet-500/5 border-violet-500/10'
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${
+                                    isLightMode ? 'text-violet-700' : 'text-violet-400'
+                                  }`}>
+                                    🤖 AI Flag Reason
+                                  </p>
+                                  <p className={`text-xs leading-relaxed ${
+                                    isLightMode ? 'text-violet-700' : 'text-violet-200'
+                                  }`}>
+                                    {isLong ? (
+                                      <>
+                                        {aiReason.substring(0, 80)}…{' '}
+                                        <button
+                                          onClick={() =>
+                                            setSelectedReportDetails({
+                                              reporter_email: 'GreenSort AI',
+                                              reason: aiReason,
+                                            })
+                                          }
+                                          className="underline font-semibold ml-1"
+                                        >
+                                          See more
+                                        </button>
+                                      </>
+                                    ) : (
+                                      aiReason
+                                    )}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="p-4 flex items-center gap-3">
+                                {post.avatar ? (
+                                  <img src={post.avatar} alt="a" className="w-8 h-8 rounded-full object-cover" />
+                                ) : (
+                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>
+                                    {(post.user || '?').substring(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+
+                                <div>
+                                  <p className={`text-sm font-semibold ${txtMain}`}>{post.user}</p>
+                                  <p className={`text-[11px] ${txtMuted}`}>
+                                    Posted {timeAgo(post.created_at)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="px-4 pb-3 flex-1">
+                                {post.title && <p className={`font-semibold ${txtMain} text-sm mb-1`}>{post.title}</p>}
+                                <p className={`text-xs ${txtMuted} line-clamp-2`}>{post.desc || 'No content.'}</p>
+                              </div>
+
+                              {post.image && (
+                                <div
+                                  className={`w-full h-44 flex items-center justify-center overflow-hidden border-t border-b ${
+                                    isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'
+                                  }`}
+                                >
+                                  <img
+                                    src={post.image.split(',')[0]}
+                                    alt="Flagged"
+                                    className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-80 transition-opacity"
+                                    onClick={() => setViewImage(post.image.split(',')[0])}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none';
+                                    }}
+                                  />
+                                </div>
+                              )}
+
+                              <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FAF8FF]' : 'bg-violet-500/[0.03]'}`}>
+                                <button
+                                  onClick={() => handleDeleteAiFlaggedPost(post)}
+                                  className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-red-500 hover:bg-red-400"
+                                >
+                                  Delete Post
+                                </button>
+
+                                <button
+                                  onClick={() => handleKeepAiFlaggedHidden(post)}
+                                  className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${
+                                    isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'
+                                  }`}
+                                >
+                                  Keep Hidden
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </>
               )}
 
               {activeTab === 'reported_comments' && (
@@ -1117,89 +1857,6 @@ export default function ContentModeration() {
 
                             <button
                               onClick={() => handleDismissCommentReport(report)}
-                              className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${
-                                isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'
-                              }`}
-                            >
-                              Dismiss Report
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'reported_users' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {userReports.length === 0 ? (
-                    <div className={`col-span-full p-10 text-center rounded-2xl border ${
-                      isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'
-                    } text-sm italic`}>
-                      No pending user reports.
-                    </div>
-                  ) : (
-                    userReports.map((report) => {
-                      const isLong = report.reason && report.reason.length > 80;
-
-                      return (
-                        <div key={report.id} className={`${cardBase} flex flex-col border-violet-200/60 ${isLightMode ? '' : '!border-violet-500/20'}`}>
-                          <div className={cardHeader('purple')}>
-                            <div className="min-w-0">
-                              <p className={`text-[10px] font-bold uppercase tracking-wider ${reporterText.purple} mb-1`}>
-                                Reported by: {report.reporter_email}
-                              </p>
-                              <p className={`text-xs leading-relaxed ${reasonText.purple}`}>
-                                {isLong ? (
-                                  <>
-                                    {report.reason.substring(0, 80)}…{' '}
-                                    <button onClick={() => setSelectedReportDetails(report)} className="underline font-semibold ml-1">
-                                      See more
-                                    </button>
-                                  </>
-                                ) : (
-                                  report.reason
-                                )}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex-1 flex flex-col items-center justify-center py-10 gap-3">
-                            {report.reported_avatar ? (
-                              <img
-                                src={report.reported_avatar}
-                                alt="User"
-                                className={`w-20 h-20 rounded-full object-cover border-4 ${
-                                  isLightMode ? 'border-[#E3E8E1]' : 'border-white/[0.07]'
-                                }`}
-                              />
-                            ) : (
-                              <div className={`w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold ${t.iconBg1}`}>
-                                {(report.reported_user || 'U').substring(0, 2).toUpperCase()}
-                              </div>
-                            )}
-
-                            <div className="text-center">
-                              <h3 className={`font-semibold ${txtMain} text-base`}>
-                                {report.reported_user || 'Unknown User'}
-                              </h3>
-                              <p className={`text-xs ${txtMuted} mt-0.5`}>
-                                Reported Account
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className={`p-3 flex flex-col gap-2 ${isLightMode ? 'bg-[#FAF8FF]' : 'bg-violet-500/[0.03]'}`}>
-                            <button
-                              onClick={() => setBanModal({ report })}
-                              className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-violet-600 hover:bg-violet-500"
-                            >
-                              Ban / Warn User
-                            </button>
-
-                            <button
-                              onClick={() => handleDismissUserReport(report)}
                               className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${
                                 isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'
                               }`}
@@ -1356,12 +2013,16 @@ export default function ContentModeration() {
                                       ? isLightMode
                                         ? 'bg-violet-50 text-violet-700 border-violet-200'
                                         : 'bg-violet-500/10 text-violet-400 border-violet-500/20'
-                                      : isLightMode
-                                        ? 'bg-orange-50 text-orange-700 border-orange-200'
-                                        : 'bg-orange-500/10 text-orange-400 border-orange-500/20'
+                                      : log.type === 'AI Flag'
+                                        ? isLightMode
+                                          ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                                          : 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20'
+                                        : isLightMode
+                                          ? 'bg-orange-50 text-orange-700 border-orange-200'
+                                          : 'bg-orange-500/10 text-orange-400 border-orange-500/20'
                               }`}
                             >
-                              {log.type}
+                              {log.type === 'AI Flag' ? '🤖 AI Flag' : log.type}
                             </span>
 
                             <span
@@ -1407,65 +2068,6 @@ export default function ContentModeration() {
           <div className="h-12" />
         </div>
       </div>
-
-      {banModal && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          onClick={() => setBanModal(null)}
-        >
-          <div
-            className={`w-full max-w-sm rounded-2xl border shadow-2xl ${
-              isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.07]'
-            }`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={`p-5 border-b ${isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'}`}>
-              <h3 className={`text-sm font-bold ${txtMain}`}>Take Action on User</h3>
-              <p className={`text-[11px] font-medium ${txtMuted} mt-0.5`}>
-                {banModal.report.reported_user}
-              </p>
-            </div>
-
-            <div className="p-5 space-y-3">
-              <div className={`p-3 rounded-xl border text-xs ${
-                isLightMode ? 'bg-[#F7F9F6] border-[#E3E8E1]' : 'bg-white/[0.02] border-white/[0.05]'
-              }`}>
-                <p className={`font-semibold ${txtMuted} mb-1`}>
-                  Reported by: {banModal.report.reporter_email}
-                </p>
-                <p className={`${txtSub} leading-relaxed`}>
-                  {banModal.report.reason}
-                </p>
-              </div>
-
-              <button
-                onClick={() => handleBanUser(banModal.report, 'ban')}
-                className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-400 transition-all"
-              >
-                Ban User set status Banned
-              </button>
-
-              <button
-                onClick={() => handleBanUser(banModal.report, 'warn')}
-                className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-400 transition-all"
-              >
-                Issue Warning Only
-              </button>
-
-              <button
-                onClick={() => setBanModal(null)}
-                className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-all ${
-                  isLightMode
-                    ? 'border-[#E3E8E1] text-[#7A8C77] hover:bg-[#F3F6F1]'
-                    : 'border-white/[0.07] text-[#627A5C] hover:bg-white/[0.04]'
-                }`}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {selectedReportDetails && (
         <div
