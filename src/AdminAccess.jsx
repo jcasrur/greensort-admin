@@ -208,7 +208,8 @@ export default function AdminAccess() {
       });
 
       // Send invite email through Supabase Edge Function
-      const inviteLink = `${window.location.origin}/admin-setup?token=${inv.token}`;
+      // IMPORTANT: This must point to AcceptInvite.jsx route.
+      const inviteLink = `${window.location.origin}/accept-invite?token=${encodeURIComponent(inv.token)}`;
 
       const { data: authData } = await supabase.auth.getSession();
       const token = authData.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -255,7 +256,7 @@ export default function AdminAccess() {
           .from('admin_users')
           .delete()
           .eq('email', cleanEmail)
-          .eq('is_active', false);
+          .eq('role', 'admin');
 
         throw new Error(
           errData.error ||
@@ -444,7 +445,7 @@ export default function AdminAccess() {
             ))}
           </div>
 
-          {/* GUIDE CARD - ADDED */}
+          {/* GUIDE CARD */}
           <div
             className={`mb-6 p-5 rounded-2xl border flex items-start gap-4 ${
               isLightMode
@@ -649,7 +650,6 @@ export default function AdminAccess() {
                                         .from('admin_users')
                                         .delete()
                                         .eq('email', inv.email)
-                                        .eq('is_active', false)
                                         .eq('role', 'admin');
 
                                       fetchData();

@@ -245,6 +245,12 @@ export default function MFAEnrollment() {
       const verified = allTotp.find(f => f.status === 'verified');
       if (verified) {
         setPhase(STEPS.SUCCESS);
+
+        setTimeout(async () => {
+          await supabase.auth.signOut();
+          navigate('/?mfa=setup-complete');
+        }, 1200);
+
         return;
       }
 
@@ -337,6 +343,11 @@ export default function MFAEnrollment() {
         return;
       }
       setPhase(STEPS.SUCCESS);
+
+      setTimeout(async () => {
+        await supabase.auth.signOut();
+        navigate('/?mfa=setup-complete');
+      }, 1200);
     } catch (err) {
       setShake(true); setTimeout(()=>setShake(false),420);
       setError(err.message || 'Verification failed.');
@@ -668,7 +679,13 @@ export default function MFAEnrollment() {
                 ))}
               </div>
 
-              <button className="mfa-btn" onClick={() => navigate('/')}>
+              <button
+                className="mfa-btn"
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                  navigate('/?mfa=setup-complete');
+                }}
+              >
                 Go to Login
                 <svg width="14" height="14" fill="none" stroke="#052e16" strokeWidth="2.5" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"/>

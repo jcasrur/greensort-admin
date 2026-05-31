@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabase';
 import logo from './assets/logo.png'; // 1. IMPORTED LOGO HERE
@@ -198,6 +198,7 @@ const AdminLogin = () => {
   const [capsLockOn,   setCapsLockOn]   = useState(false);
   const [step1Loading, setStep1Loading] = useState(false);
   const [step1Error,   setStep1Error]   = useState('');
+  const [setupMessage, setSetupMessage] = useState('');
 
   // Step 2
   const [step,        setStep]        = useState(1);
@@ -206,6 +207,15 @@ const AdminLogin = () => {
   const [totpError,   setTotpError]   = useState('');
   const [shake,       setShake]       = useState(false);
   const [adminName,   setAdminName]   = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.get('mfa') === 'setup-complete') {
+      setSetupMessage('Google Authenticator setup complete. Please log in again.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   const handleKeyUp = e => setCapsLockOn(e.getModifierState('CapsLock'));
 
@@ -239,15 +249,10 @@ const AdminLogin = () => {
       }
       const { data: adminRow, error: dbError } = await supabase
         .from('admin_users').select('role, is_active, full_name')
-        .eq('email', authData.user.email).single();
+        .ilike('email', authData.user.email).eq('is_active', true).maybeSingle();
       if (dbError || !adminRow) {
         await supabase.auth.signOut();
         setStep1Error('This account does not have admin portal access.');
-        return;
-      }
-      if (!adminRow.is_active) {
-        await supabase.auth.signOut();
-        setStep1Error('Your admin account has been deactivated. Contact a Super Admin.');
         return;
       }
       setAdminName(adminRow.full_name || email.split('@')[0]);
@@ -437,6 +442,17 @@ const AdminLogin = () => {
                   </p>
                 </div>
 
+                {setupMessage && (
+                  <div className="gs-animate" style={{ marginBottom:18,padding:'11px 14px',
+                    background:'rgba(52,211,153,.08)',border:'1px solid rgba(52,211,153,.25)',borderRadius:12,
+                    display:'flex',alignItems:'center',gap:10 }}>
+                    <svg width="15" height="15" fill="none" stroke="#34d399" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink:0 }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span style={{ fontSize:13,color:'#34d399',fontWeight:500 }}>{setupMessage}</span>
+                  </div>
+                )}
+
                 {step1Error && (
                   <div className="gs-animate" style={{ marginBottom:18,padding:'11px 14px',
                     background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.25)',borderRadius:12,
@@ -500,11 +516,24 @@ const AdminLogin = () => {
                       <input type="checkbox" className="gs-checkbox" />
                       <span style={{ fontSize:13,color:'rgba(162,218,189,.4)',fontWeight:400 }}>Remember me</span>
                     </label>
-                    <a href="#" style={{ fontSize:12,color:'rgba(52,211,153,.5)',textDecoration:'none',fontWeight:500,transition:'color .2s' }}
-                      onMouseEnter={e => e.currentTarget.style.color='#34d399'}
-                      onMouseLeave={e => e.currentTarget.style.color='rgba(52,211,153,.5)'}>
-                      Forgot password?
-                    </a>
+                    <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
+                      <a href="#" style={{ fontSize:12,color:'rgba(52,211,153,.5)',textDecoration:'none',fontWeight:500,transition:'color .2s' }}
+                        onMouseEnter={e => e.currentTarget.style.color='#34d399'}
+                        onMouseLeave={e => e.currentTarget.style.color='rgba(52,211,153,.5)'}>
+                        Forgot password?
+                      </a>
+                      <span
+                        style={{
+                          fontSize:11,
+                          color:'rgba(162,218,189,.3)',
+                          fontWeight:400,
+                          textAlign:'right',
+                          maxWidth:180,
+                        }}
+                      >
+                        Use the invite link sent to your email.
+                      </span>
+                    </div>
                   </div>
 
                   <div className="gs-animate gs-delay-4">

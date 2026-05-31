@@ -214,9 +214,11 @@ export default function UserManagement() {
   const [notifySent, setNotifySent] = useState({});
 
   // ── Presence ───────────────────────────────────────────────────────────────
+  // Uses a unique channel name to avoid conflict with PresenceTracker's
+  // 'app-presence' subscription (cannot add callbacks after subscribe()).
   useEffect(() => {
     fetchUsers();
-    const channel = supabase.channel('app-presence');
+    const channel = supabase.channel('admin-presence-monitor');
     channel.on('presence', { event: 'sync' }, () => {
       const state = channel.presenceState();
       const activeIds = new Set();
@@ -496,7 +498,7 @@ export default function UserManagement() {
                           {/* Role */}
                           <td className="px-4 py-4">
                             <span className={`${isLightMode ? 'bg-[#F0F4F1] text-[#6C9A7D]' : 'bg-[#231B2A] text-[#9A73C2]'} py-1.5 px-3 rounded-md text-[10px] font-bold border border-white/[0.05] tracking-wider`}>
-                              {(user.role || 'resident').toUpperCase()}
+                              {(user.role || 'student').toUpperCase()}
                             </span>
                           </td>
 
