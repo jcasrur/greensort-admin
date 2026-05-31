@@ -1,46 +1,93 @@
 // AdminAccess.jsx
 // ─────────────────────────────────────────────────────────────────────────────
 // RBAC Management Dashboard
-//   • Lists all super_admins and admins
-//   • Super Admins are visible but can only be added/changed in Supabase
-//   • App-side invitation is for Admin role only
-//   • Deactivate / reactivate Admin accounts
-//   • View pending Admin invitations
+//   • Super Admin can invite role-based admins
+//   • Supported roles: Super Admin, School Admin, Accounting, Receiving Staff, Moderator
+//   • Pending invitations show the selected role
+//   • Admin roster is grouped by role
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabase';
 import Sidebar from './Sidebar';
 import { useTheme, ThemedCard } from './ThemeContext';
 import { useAdminAuth } from './useAdminAuth';
 
-// ── tiny reusable badge ──────────────────────────────────────────────────────
+const ROLE_META = {
+  super_admin: {
+    label: 'Super Admin',
+    short: 'SA',
+    description: 'Full access to all GreenSort admin sections, including Admin Access Control.',
+    lightClass: 'bg-amber-50 text-amber-700 border-amber-200',
+    darkClass: 'bg-amber-500/10 text-amber-400 border-amber-500/25',
+  },
+  school_admin: {
+    label: 'School Admin',
+    short: 'SCH',
+    description: 'Can access Dashboard/Reports, User Management, and WISHCRAFT Fund settings.',
+    lightClass: 'bg-blue-50 text-blue-700 border-blue-200',
+    darkClass: 'bg-blue-500/10 text-blue-400 border-blue-500/25',
+  },
+  accounting: {
+    label: 'Accounting',
+    short: 'ACC',
+    description: 'Can access Accounting and Student Records for fund/contribution monitoring.',
+    lightClass: 'bg-purple-50 text-purple-700 border-purple-200',
+    darkClass: 'bg-purple-500/10 text-purple-400 border-purple-500/25',
+  },
+  receiving_staff: {
+    label: 'Receiving Staff',
+    short: 'MRF',
+    description: 'Can access MRF receiving and inventory-related records.',
+    lightClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    darkClass: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25',
+  },
+  moderator: {
+    label: 'Moderator',
+    short: 'MOD',
+    description: 'Can access moderation, reports, posts, comments, and flagged content.',
+    lightClass: 'bg-slate-50 text-slate-700 border-slate-200',
+    darkClass: 'bg-slate-500/10 text-slate-300 border-slate-500/25',
+  },
+  admin: {
+    label: 'Admin',
+    short: 'ADM',
+    description: 'Legacy admin role. Use the specific roles above for new accounts.',
+    lightClass: 'bg-[#E4EFE8] text-[#4A7D5C] border-[#98BAA3]/30',
+    darkClass: 'bg-[#2CD87D]/10 text-[#2CD87D] border-[#2CD87D]/20',
+  },
+};
+
+const ROLE_OPTIONS = [
+  'school_admin',
+  'accounting',
+  'receiving_staff',
+  'moderator',
+  'super_admin',
+];
+
+const roleLabel = (role) => ROLE_META[role]?.label || 'Admin';
+const roleDescription = (role) => ROLE_META[role]?.description || ROLE_META.admin.description;
+
 const RoleBadge = ({ role, light }) => {
-  const isSA = role === 'super_admin';
+  const meta = ROLE_META[role] || ROLE_META.admin;
 
   return (
     <span
       className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase border ${
-        isSA
-          ? light
-            ? 'bg-amber-50 text-amber-700 border-amber-200'
-            : 'bg-amber-500/10 text-amber-400 border-amber-500/25'
-          : light
-            ? 'bg-[#E4EFE8] text-[#4A7D5C] border-[#98BAA3]/30'
-            : 'bg-[#2CD87D]/10 text-[#2CD87D] border-[#2CD87D]/20'
+        light ? meta.lightClass : meta.darkClass
       }`}
     >
-      {isSA && (
+      {role === 'super_admin' && (
         <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
         </svg>
       )}
-      {isSA ? 'Super Admin' : 'Admin'}
+      {meta.label}
     </span>
   );
 };
 
-// ── status dot ───────────────────────────────────────────────────────────────
 const StatusDot = ({ active, light }) => (
   <span
     className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
@@ -68,7 +115,6 @@ const StatusDot = ({ active, light }) => (
   </span>
 );
 
-// ── modal wrapper ─────────────────────────────────────────────────────────────
 const Modal = ({ open, onClose, children, light }) => {
   if (!open) return null;
 
@@ -78,7 +124,7 @@ const Modal = ({ open, onClose, children, light }) => {
       onClick={onClose}
     >
       <div
-        className={`w-full max-w-md rounded-3xl border shadow-2xl ${
+        className={`w-full max-w-xl rounded-3xl border shadow-2xl ${
           light ? 'bg-white border-[#F0F4F1]' : 'bg-[#0F1814] border-white/[0.07]'
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -89,29 +135,30 @@ const Modal = ({ open, onClose, children, light }) => {
   );
 };
 
-// ── main component ────────────────────────────────────────────────────────────
 export default function AdminAccess() {
   const { isLightMode, t } = useTheme();
-  const { adminUser, isSuperAdmin, isAdmin, loading: authLoading } = useAdminAuth();
+  const { adminUser, isSuperAdmin, loading: authLoading } = useAdminAuth();
 
   const [admins, setAdmins] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [activeTab, setActiveTab] = useState('roster');
   const [dataLoading, setDataLoading] = useState(true);
 
-  // invite modal state
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteFullName, setInviteFullName] = useState('');
+  const [inviteRole, setInviteRole] = useState('school_admin');
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
+
+  const accentText = isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]';
 
   const fetchData = useCallback(async () => {
     setDataLoading(true);
 
     try {
-      const [{ data: adminRows }, { data: invRows }] = await Promise.all([
+      const [{ data: adminRows, error: adminErr }, { data: invRows, error: invErr }] = await Promise.all([
         supabase.from('admin_users').select('*').order('created_at', { ascending: false }),
         supabase
           .from('admin_invitations')
@@ -120,14 +167,11 @@ export default function AdminAccess() {
           .order('created_at', { ascending: false }),
       ]);
 
-      setAdmins(adminRows || []);
+      if (adminErr) throw adminErr;
+      if (invErr) throw invErr;
 
-      // Only show active, not expired admin invitations
-      setInvitations(
-        (invRows || []).filter(
-          (i) => new Date(i.expires_at) > new Date() && i.role === 'admin'
-        )
-      );
+      setAdmins(adminRows || []);
+      setInvitations((invRows || []).filter((i) => new Date(i.expires_at) > new Date()));
     } catch (err) {
       console.error('fetchData error:', err);
     } finally {
@@ -136,81 +180,109 @@ export default function AdminAccess() {
   }, []);
 
   useEffect(() => {
-    if (!authLoading && isAdmin) fetchData();
-  }, [authLoading, isAdmin, fetchData]);
+    if (!authLoading && isSuperAdmin) fetchData();
+  }, [authLoading, isSuperAdmin, fetchData]);
 
-  // ── invite submission: ADMIN ONLY ──────────────────────────────────────────
+  const groupedAdmins = useMemo(() => {
+    const groups = {
+      super_admin: [],
+      school_admin: [],
+      accounting: [],
+      receiving_staff: [],
+      moderator: [],
+      admin: [],
+      other: [],
+    };
+
+    admins.forEach((admin) => {
+      if (groups[admin.role]) groups[admin.role].push(admin);
+      else groups.other.push(admin);
+    });
+
+    return groups;
+  }, [admins]);
+
+  const inviteCounts = useMemo(() => {
+    return invitations.reduce((acc, inv) => {
+      acc[inv.role] = (acc[inv.role] || 0) + 1;
+      return acc;
+    }, {});
+  }, [invitations]);
+
   const handleInvite = async (e) => {
     e.preventDefault();
     setInviteError('');
     setInviteSuccess('');
 
-    if (!inviteEmail.trim()) {
+    const cleanEmail = inviteEmail.toLowerCase().trim();
+    const cleanFullName = inviteFullName.trim();
+    const selectedRole = inviteRole;
+
+    if (!isSuperAdmin) {
+      setInviteError('Only Super Admin can invite admin users.');
+      return;
+    }
+
+    if (!cleanEmail) {
       setInviteError('Email is required.');
       return;
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
       setInviteError('Enter a valid email address.');
       return;
     }
 
-    const existing = admins.find(
-      (a) => a.email.toLowerCase() === inviteEmail.toLowerCase()
-    );
+    if (!ROLE_OPTIONS.includes(selectedRole)) {
+      setInviteError('Please select a valid role.');
+      return;
+    }
 
+    const existing = admins.find((a) => a.email?.toLowerCase() === cleanEmail);
     if (existing) {
-      setInviteError('An admin with that email already exists.');
+      setInviteError('An admin user with that email already exists.');
       return;
     }
 
     setInviting(true);
-
     let createdInvitationId = null;
 
     try {
-      const cleanEmail = inviteEmail.toLowerCase().trim();
-      const inviteRole = 'admin';
-
-      // Insert invitation token as Admin only
       const { data: inv, error: invErr } = await supabase
         .from('admin_invitations')
         .insert({
           email: cleanEmail,
-          role: inviteRole,
+          role: selectedRole,
           invited_by: adminUser.id,
         })
         .select()
         .single();
 
       if (invErr) throw invErr;
-
       createdInvitationId = inv.id;
 
-      // Create admin_users record as Admin only
-      const { error: adminErr } = await supabase
-        .from('admin_users')
-        .insert({
-          email: cleanEmail,
-          full_name: inviteFullName.trim() || null,
-          role: inviteRole,
-          invited_by: adminUser.id,
-        });
+      const { error: adminErr } = await supabase.from('admin_users').insert({
+        email: cleanEmail,
+        full_name: cleanFullName || null,
+        role: selectedRole,
+        invited_by: adminUser.id,
+        is_active: true,
+      });
 
       if (adminErr) throw adminErr;
 
-      // Log the action
       await supabase.from('admin_activity_log').insert({
         actor_email: adminUser.email,
-        action: 'invited_admin',
+        action: 'invited_admin_user',
         target_email: cleanEmail,
-        metadata: { token_id: inv.id, role: inviteRole },
+        metadata: {
+          token_id: inv.id,
+          role: selectedRole,
+          role_label: roleLabel(selectedRole),
+        },
       });
 
-      // Send invite email through Supabase Edge Function
-      // IMPORTANT: This must point to AcceptInvite.jsx route.
-      const APP_URL = 'https://greensort-admin.vercel.app';
-
+      const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
       const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}`;
 
       const { data: authData } = await supabase.auth.getSession();
@@ -227,15 +299,15 @@ export default function AdminAccess() {
         },
         body: JSON.stringify({
           to_email: cleanEmail,
-          to_name: inviteFullName.trim() || 'Admin',
-          role: inviteRole,
+          to_name: cleanFullName || roleLabel(selectedRole),
+          role: selectedRole,
+          role_label: roleLabel(selectedRole),
           invite_link: inviteLink,
         }),
       });
 
       if (!response.ok) {
         const errText = await response.text();
-
         let errData = {};
         try {
           errData = JSON.parse(errText);
@@ -243,33 +315,19 @@ export default function AdminAccess() {
           errData = { error: errText };
         }
 
-        console.error('Edge function failed status:', response.status);
-        console.error('Edge function failed response:', errData);
-
-        // Cleanup if email sending failed
         if (createdInvitationId) {
-          await supabase
-            .from('admin_invitations')
-            .delete()
-            .eq('id', createdInvitationId);
+          await supabase.from('admin_invitations').delete().eq('id', createdInvitationId);
         }
 
-        await supabase
-          .from('admin_users')
-          .delete()
-          .eq('email', cleanEmail)
-          .eq('role', 'admin');
+        await supabase.from('admin_users').delete().eq('email', cleanEmail).eq('role', selectedRole);
 
-        throw new Error(
-          errData.error ||
-            errData.message ||
-            'Failed to send invitation email.'
-        );
+        throw new Error(errData.error || errData.message || 'Failed to send invitation email.');
       }
 
-      setInviteSuccess(`Admin invitation sent to ${inviteEmail}!`);
+      setInviteSuccess(`${roleLabel(selectedRole)} invitation sent to ${cleanEmail}!`);
       setInviteEmail('');
       setInviteFullName('');
+      setInviteRole('school_admin');
       fetchData();
     } catch (err) {
       console.error('Invite error:', err);
@@ -279,79 +337,82 @@ export default function AdminAccess() {
     }
   };
 
-  // ── deactivate / reactivate ────────────────────────────────────────────────
   const handleToggleActive = async (admin) => {
+    if (!isSuperAdmin) {
+      alert('Only Super Admin can manage admin accounts.');
+      return;
+    }
+
     if (admin.id === adminUser?.id) {
       alert('You cannot deactivate your own account.');
       return;
     }
 
-    // Super Admin accounts should be managed directly in Supabase
-    if (admin.role === 'super_admin') {
-      alert('Super Admin accounts can only be managed directly in Supabase.');
-      return;
-    }
-
     const action = admin.is_active ? 'deactivate' : 'reactivate';
+    const label = roleLabel(admin.role);
 
-    if (!window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${admin.email}?`)) {
+    if (!window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${label} account ${admin.email}?`)) {
       return;
     }
 
-    await supabase
-      .from('admin_users')
-      .update({ is_active: !admin.is_active })
-      .eq('id', admin.id);
+    await supabase.from('admin_users').update({ is_active: !admin.is_active }).eq('id', admin.id);
 
     await supabase.from('admin_activity_log').insert({
       actor_email: adminUser.email,
-      action: `${action}_admin`,
+      action: `${action}_admin_user`,
       target_email: admin.email,
+      metadata: { role: admin.role, role_label: label },
+    });
+
+    fetchData();
+  };
+
+  const handleRevokeInvite = async (inv) => {
+    if (!isSuperAdmin) return;
+    if (!window.confirm(`Revoke ${roleLabel(inv.role)} invite for ${inv.email}?`)) return;
+
+    await supabase.from('admin_invitations').delete().eq('id', inv.id);
+    await supabase.from('admin_users').delete().eq('email', inv.email).eq('role', inv.role);
+
+    await supabase.from('admin_activity_log').insert({
+      actor_email: adminUser.email,
+      action: 'revoked_admin_invite',
+      target_email: inv.email,
+      metadata: { role: inv.role, role_label: roleLabel(inv.role) },
     });
 
     fetchData();
   };
 
   const timeAgo = (ds) => {
+    if (!ds) return '—';
     const s = Math.floor((Date.now() - new Date(ds)) / 1000);
-
     if (s < 60) return 'just now';
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-
     return `${Math.floor(s / 86400)}d ago`;
   };
 
-  const superAdmins = admins.filter((a) => a.role === 'super_admin');
-  const regularAdmins = admins.filter((a) => a.role === 'admin');
-
-  const accentText = isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]';
-
   const tabs = [
     { key: 'roster', label: 'Admin Roster' },
-    {
-      key: 'invitations',
-      label: `Pending Admin Invites ${invitations.length > 0 ? `(${invitations.length})` : ''}`,
-    },
+    { key: 'invitations', label: `Pending Invites ${invitations.length > 0 ? `(${invitations.length})` : ''}` },
   ];
 
   if (authLoading) {
     return (
       <div className={`flex h-screen w-full ${t.bg} items-center justify-center`}>
-        <div className={`text-sm font-bold tracking-widest animate-pulse ${accentText}`}>
-          VERIFYING ACCESS...
-        </div>
+        <div className={`text-sm font-bold tracking-widest animate-pulse ${accentText}`}>VERIFYING ACCESS...</div>
       </div>
     );
   }
 
-  if (!isAdmin) {
+  if (!isSuperAdmin) {
     return (
       <div className={`flex h-screen w-full ${t.bg} items-center justify-center`}>
-        <div className="text-center">
+        <div className="text-center max-w-md px-6">
           <p className="text-red-400 font-bold text-lg mb-2">Access Denied</p>
           <p className={`text-sm ${t.textMuted}`}>
-            You do not have permission to view this page.
+            Admin Access Control is only available for Super Admin accounts.
           </p>
         </div>
       </div>
@@ -364,23 +425,17 @@ export default function AdminAccess() {
 
       <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
         <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
-          {/* HEADER */}
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-4">
             <div>
-              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>
-                Admin Access Control
-              </h2>
+              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Admin Access Control</h2>
               <p className={`${t.textMuted} mt-1 text-sm font-medium`}>
-                Manage Admin access to the GreenSort Admin Portal ·{' '}
+                Manage role-based access for the GreenSort Admin Portal ·{' '}
                 <span className={accentText}>
-                  You are logged in as{' '}
-                  <strong>
-                    {adminUser?.role === 'super_admin' ? 'Super Admin' : 'Admin'}
-                  </strong>
+                  You are logged in as <strong>Super Admin</strong>
                 </span>
               </p>
               <p className={`mt-1 text-xs ${t.textMuted}`}>
-                Super Admin accounts are view-only here and must be added or modified directly in Supabase.
+                New invites can be assigned as School Admin, Accounting, Receiving Staff, Moderator, or Super Admin.
               </p>
             </div>
 
@@ -399,17 +454,17 @@ export default function AdminAccess() {
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              Invite Admin
+              Invite Admin User
             </button>
           </div>
 
-          {/* STAT CARDS */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
             {[
               { label: 'Total Admin Users', value: admins.length },
-              { label: 'Super Admins', value: superAdmins.length, amber: true },
-              { label: 'Admins', value: regularAdmins.length },
-              { label: 'Pending Admin Invites', value: invitations.length },
+              { label: 'Super Admins', value: groupedAdmins.super_admin.length, amber: true },
+              { label: 'School Admins', value: groupedAdmins.school_admin.length },
+              { label: 'Accounting', value: groupedAdmins.accounting.length },
+              { label: 'Pending Invites', value: invitations.length },
             ].map((card) => (
               <ThemedCard
                 key={card.label}
@@ -421,117 +476,52 @@ export default function AdminAccess() {
                     : ''
                 }`}
               >
-                <p
-                  className={`text-[12px] font-semibold tracking-wide ${
-                    card.amber
-                      ? isLightMode
-                        ? 'text-amber-600'
-                        : 'text-amber-400'
-                      : t.textMuted
-                  }`}
-                >
+                <p className={`text-[12px] font-semibold tracking-wide ${card.amber ? (isLightMode ? 'text-amber-600' : 'text-amber-400') : t.textMuted}`}>
                   {card.label}
                 </p>
-                <p
-                  className={`text-[36px] font-bold leading-none ${
-                    card.amber
-                      ? isLightMode
-                        ? 'text-amber-600'
-                        : 'text-amber-400'
-                      : t.textMain
-                  }`}
-                >
+                <p className={`text-[36px] font-bold leading-none ${card.amber ? (isLightMode ? 'text-amber-600' : 'text-amber-400') : t.textMain}`}>
                   {card.value}
                 </p>
               </ThemedCard>
             ))}
           </div>
 
-          {/* GUIDE CARD */}
           <div
             className={`mb-6 p-5 rounded-2xl border flex items-start gap-4 ${
-              isLightMode
-                ? 'bg-[#F9FBF9] border-[#E5ECE7]'
-                : 'bg-[#0F1814] border-white/[0.07]'
+              isLightMode ? 'bg-[#F9FBF9] border-[#E5ECE7]' : 'bg-[#0F1814] border-white/[0.07]'
             }`}
           >
             <div
               className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                isLightMode
-                  ? 'bg-[#E4EFE8] text-[#4A7D5C]'
-                  : 'bg-[#2CD87D]/10 text-[#2CD87D]'
+                isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C]' : 'bg-[#2CD87D]/10 text-[#2CD87D]'
               }`}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
 
             <div className="flex-1">
-              <h3 className={`text-sm font-black uppercase tracking-widest mb-2 ${accentText}`}>
-                Admin Access Guide
-              </h3>
-
+              <h3 className={`text-sm font-black uppercase tracking-widest mb-2 ${accentText}`}>Role Access Guide</h3>
               <p className={`text-sm leading-relaxed ${t.textMuted}`}>
-                This page is used to invite and manage <strong>Admin</strong> accounts only.
-                <strong> Super Admin</strong> accounts are visible in the roster for monitoring,
-                but they must be added, updated, or removed directly in Supabase for better security.
+                Super Admin can assign specific roles so each admin only sees the sections needed for their responsibility.
               </p>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-                <div
-                  className={`p-3 rounded-xl border ${
-                    isLightMode
-                      ? 'bg-white border-[#E5ECE7]'
-                      : 'bg-[#0A0D10] border-white/[0.05]'
-                  }`}
-                >
-                  <p className={`text-xs font-bold ${t.textMain}`}>1. Invite Admin</p>
-                  <p className={`text-[11px] mt-1 leading-relaxed ${t.textMuted}`}>
-                    Click Invite Admin, enter the email and optional full name, then send the setup link.
-                  </p>
-                </div>
-
-                <div
-                  className={`p-3 rounded-xl border ${
-                    isLightMode
-                      ? 'bg-white border-[#E5ECE7]'
-                      : 'bg-[#0A0D10] border-white/[0.05]'
-                  }`}
-                >
-                  <p className={`text-xs font-bold ${t.textMain}`}>2. Manage Admins</p>
-                  <p className={`text-[11px] mt-1 leading-relaxed ${t.textMuted}`}>
-                    Admin accounts can be deactivated or reactivated from the Admins roster.
-                  </p>
-                </div>
-
-                <div
-                  className={`p-3 rounded-xl border ${
-                    isLightMode
-                      ? 'bg-white border-[#E5ECE7]'
-                      : 'bg-[#0A0D10] border-white/[0.05]'
-                  }`}
-                >
-                  <p className={`text-xs font-bold ${t.textMain}`}>3. Super Admin</p>
-                  <p className={`text-[11px] mt-1 leading-relaxed ${t.textMuted}`}>
-                    Super Admins are view-only here and should be managed directly in Supabase.
-                  </p>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mt-4">
+                {ROLE_OPTIONS.map((role) => (
+                  <div
+                    key={role}
+                    className={`p-3 rounded-xl border ${isLightMode ? 'bg-white border-[#E5ECE7]' : 'bg-[#0A0D10] border-white/[0.05]'}`}
+                  >
+                    <RoleBadge role={role} light={isLightMode} />
+                    <p className={`text-[11px] mt-2 leading-relaxed ${t.textMuted}`}>{roleDescription(role)}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* TABS */}
-          <div
-            className={`flex items-center gap-1 mb-6 p-1.5 rounded-2xl border w-fit ${
-              isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7]' : 'bg-[#131917] border-white/[0.05]'
-            }`}
-          >
+          <div className={`flex items-center gap-1 mb-6 p-1.5 rounded-2xl border w-fit ${isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7]' : 'bg-[#131917] border-white/[0.05]'}`}>
             {tabs.map((tab) => (
               <button
                 key={tab.key}
@@ -555,49 +545,94 @@ export default function AdminAccess() {
             </div>
           ) : (
             <>
-              {/* ADMIN ROSTER */}
               {activeTab === 'roster' && (
                 <div className="space-y-6">
                   <AdminTable
-                    title={`Super Admins — View Only (${superAdmins.length})`}
-                    admins={superAdmins}
+                    title={`Super Admins (${groupedAdmins.super_admin.length})`}
+                    admins={groupedAdmins.super_admin}
                     currentAdmin={adminUser}
                     isLightMode={isLightMode}
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
-                    showActions={false}
                     amber
                     emptyMessage="No super admins found."
                   />
 
                   <AdminTable
-                    title={`Admins — Standard Access (${regularAdmins.length})`}
-                    admins={regularAdmins}
+                    title={`School Admins (${groupedAdmins.school_admin.length})`}
+                    admins={groupedAdmins.school_admin}
                     currentAdmin={adminUser}
                     isLightMode={isLightMode}
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
-                    showActions
-                    emptyMessage="No admins yet. Invite your first admin above."
+                    emptyMessage="No school admins yet."
                   />
+
+                  <AdminTable
+                    title={`Accounting (${groupedAdmins.accounting.length})`}
+                    admins={groupedAdmins.accounting}
+                    currentAdmin={adminUser}
+                    isLightMode={isLightMode}
+                    t={t}
+                    timeAgo={timeAgo}
+                    onToggleActive={handleToggleActive}
+                    emptyMessage="No accounting admins yet."
+                  />
+
+                  <AdminTable
+                    title={`Receiving Staff (${groupedAdmins.receiving_staff.length})`}
+                    admins={groupedAdmins.receiving_staff}
+                    currentAdmin={adminUser}
+                    isLightMode={isLightMode}
+                    t={t}
+                    timeAgo={timeAgo}
+                    onToggleActive={handleToggleActive}
+                    emptyMessage="No receiving staff admins yet."
+                  />
+
+                  <AdminTable
+                    title={`Moderators (${groupedAdmins.moderator.length})`}
+                    admins={groupedAdmins.moderator}
+                    currentAdmin={adminUser}
+                    isLightMode={isLightMode}
+                    t={t}
+                    timeAgo={timeAgo}
+                    onToggleActive={handleToggleActive}
+                    emptyMessage="No moderators yet."
+                  />
+
+                  {groupedAdmins.admin.length > 0 && (
+                    <AdminTable
+                      title={`Legacy Admin Role (${groupedAdmins.admin.length})`}
+                      admins={groupedAdmins.admin}
+                      currentAdmin={adminUser}
+                      isLightMode={isLightMode}
+                      t={t}
+                      timeAgo={timeAgo}
+                      onToggleActive={handleToggleActive}
+                      emptyMessage="No legacy admin users."
+                    />
+                  )}
                 </div>
               )}
 
-              {/* PENDING INVITATIONS */}
               {activeTab === 'invitations' && (
                 <ThemedCard className="!p-0 overflow-hidden">
                   <div className={`px-6 py-4 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.05]'}`}>
-                    <h3 className={`text-sm font-black uppercase tracking-widest ${accentText}`}>
-                      Pending Admin Invitations
-                    </h3>
+                    <h3 className={`text-sm font-black uppercase tracking-widest ${accentText}`}>Pending Role Invitations</h3>
+                    {Object.keys(inviteCounts).length > 0 && (
+                      <p className={`text-xs mt-1 ${t.textMuted}`}>
+                        {Object.entries(inviteCounts)
+                          .map(([role, count]) => `${count} ${roleLabel(role)}`)
+                          .join(' · ')}
+                      </p>
+                    )}
                   </div>
 
                   {invitations.length === 0 ? (
-                    <p className={`p-10 text-center italic text-sm ${t.textMuted}`}>
-                      No pending admin invitations.
-                    </p>
+                    <p className={`p-10 text-center italic text-sm ${t.textMuted}`}>No pending admin invitations.</p>
                   ) : (
                     <table className="w-full text-left border-collapse">
                       <thead>
@@ -606,7 +641,7 @@ export default function AdminAccess() {
                           <th className="px-6 py-3 font-bold">Role</th>
                           <th className="px-6 py-3 font-bold">Invited By</th>
                           <th className="px-6 py-3 font-bold">Expires</th>
-                          {isSuperAdmin && <th className="px-6 py-3 font-bold text-right">Action</th>}
+                          <th className="px-6 py-3 font-bold text-right">Action</th>
                         </tr>
                       </thead>
 
@@ -615,20 +650,12 @@ export default function AdminAccess() {
                           <tr
                             key={inv.id}
                             className={`border-b text-sm transition-colors ${
-                              isLightMode
-                                ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]'
-                                : 'border-white/[0.03] hover:bg-white/[0.02]'
+                              isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'
                             }`}
                           >
-                            <td className={`px-6 py-4 font-semibold ${t.textMain}`}>
-                              {inv.email}
-                            </td>
-                            <td className="px-6 py-4">
-                              <RoleBadge role="admin" light={isLightMode} />
-                            </td>
-                            <td className={`px-6 py-4 text-xs ${t.textMuted}`}>
-                              {inv.admin_users?.email || '—'}
-                            </td>
+                            <td className={`px-6 py-4 font-semibold ${t.textMain}`}>{inv.email}</td>
+                            <td className="px-6 py-4"><RoleBadge role={inv.role} light={isLightMode} /></td>
+                            <td className={`px-6 py-4 text-xs ${t.textMuted}`}>{inv.admin_users?.email || '—'}</td>
                             <td className={`px-6 py-4 text-xs ${t.textMuted}`}>
                               {new Date(inv.expires_at).toLocaleDateString('en-US', {
                                 month: 'short',
@@ -637,36 +664,16 @@ export default function AdminAccess() {
                                 minute: '2-digit',
                               })}
                             </td>
-
-                            {isSuperAdmin && (
-                              <td className="px-6 py-4 text-right">
-                                <button
-                                  onClick={async () => {
-                                    if (window.confirm(`Revoke invite for ${inv.email}?`)) {
-                                      await supabase
-                                        .from('admin_invitations')
-                                        .delete()
-                                        .eq('id', inv.id);
-
-                                      await supabase
-                                        .from('admin_users')
-                                        .delete()
-                                        .eq('email', inv.email)
-                                        .eq('role', 'admin');
-
-                                      fetchData();
-                                    }
-                                  }}
-                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                                    isLightMode
-                                      ? 'text-red-500 border-red-200 hover:bg-red-50'
-                                      : 'text-red-400 border-red-500/20 hover:bg-red-500/10'
-                                  }`}
-                                >
-                                  Revoke
-                                </button>
-                              </td>
-                            )}
+                            <td className="px-6 py-4 text-right">
+                              <button
+                                onClick={() => handleRevokeInvite(inv)}
+                                className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                  isLightMode ? 'text-red-500 border-red-200 hover:bg-red-50' : 'text-red-400 border-red-500/20 hover:bg-red-500/10'
+                                }`}
+                              >
+                                Revoke
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -681,20 +688,17 @@ export default function AdminAccess() {
         </div>
       </div>
 
-      {/* INVITE MODAL */}
       <Modal open={showInviteModal} onClose={() => setShowInviteModal(false)} light={isLightMode}>
         <div className={`px-7 py-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.06]'}`}>
-          <h3 className={`text-xl font-bold ${t.textMain}`}>Invite Admin</h3>
+          <h3 className={`text-xl font-bold ${t.textMain}`}>Invite Admin User</h3>
           <p className={`text-sm ${t.textMuted} mt-1`}>
-            This page can invite Admin accounts only. Super Admins must be added directly in Supabase.
+            Select the exact role needed for this admin account. Super Admin can also invite another Super Admin.
           </p>
         </div>
 
         <form onSubmit={handleInvite} className="px-7 py-6 space-y-5">
           <div>
-            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>
-              Email Address *
-            </label>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>Email Address *</label>
             <input
               type="email"
               value={inviteEmail}
@@ -709,62 +713,50 @@ export default function AdminAccess() {
           </div>
 
           <div>
-            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>
-              Full Name optional
-            </label>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>Full Name optional</label>
             <input
               type="text"
               value={inviteFullName}
               onChange={(e) => setInviteFullName(e.target.value)}
               placeholder="Juan dela Cruz"
               className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                isLightMode
-                  ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23]'
-                  : 'bg-[#0A0D10] border-white/[0.05] text-white'
+                isLightMode ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23]' : 'bg-[#0A0D10] border-white/[0.05] text-white'
               }`}
             />
           </div>
 
           <div>
-            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>
-              Role
-            </label>
-
-            <div
-              className={`flex items-center gap-3 p-4 rounded-2xl border-2 ${
-                isLightMode
-                  ? 'border-[#6C9A7D] bg-[#E4EFE8]'
-                  : 'border-[#2CD87D] bg-[#2CD87D]/10'
-              }`}
-            >
-              <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                  isLightMode ? 'bg-[#6C9A7D]' : 'bg-[#2CD87D]'
-                }`}
-              >
-                <svg
-                  className={`w-4 h-4 ${isLightMode ? 'text-white' : 'text-[#0A0D10]'}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                  />
-                </svg>
-              </div>
-
-              <div>
-                <p className={`text-sm font-bold ${isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]'}`}>
-                  Admin
-                </p>
-                <p className={`text-[10px] ${t.textMuted}`}>
-                  Standard access only
-                </p>
-              </div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>Role *</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ROLE_OPTIONS.map((role) => {
+                const selected = inviteRole === role;
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setInviteRole(role)}
+                    className={`p-4 rounded-2xl border-2 text-left transition-all ${
+                      selected
+                        ? isLightMode
+                          ? 'border-[#6C9A7D] bg-[#E4EFE8]'
+                          : 'border-[#2CD87D] bg-[#2CD87D]/10'
+                        : isLightMode
+                          ? 'border-[#E5ECE7] bg-[#F9FBF9] hover:bg-[#F0F4F1]'
+                          : 'border-white/[0.06] bg-[#0A0D10] hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <RoleBadge role={role} light={isLightMode} />
+                      {selected && (
+                        <svg className={`w-4 h-4 ${accentText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>{roleDescription(role)}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -785,9 +777,7 @@ export default function AdminAccess() {
               type="button"
               onClick={() => setShowInviteModal(false)}
               className={`flex-1 py-3 rounded-xl font-bold text-sm border transition-all ${
-                isLightMode
-                  ? 'border-[#E5ECE7] text-[#6B7A74] hover:bg-[#F0F4F1]'
-                  : 'border-white/[0.07] text-[#8A9B96] hover:bg-white/[0.03]'
+                isLightMode ? 'border-[#E5ECE7] text-[#6B7A74] hover:bg-[#F0F4F1]' : 'border-white/[0.07] text-[#8A9B96] hover:bg-white/[0.03]'
               }`}
             >
               Cancel
@@ -797,12 +787,10 @@ export default function AdminAccess() {
               type="submit"
               disabled={inviting}
               className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-60 ${
-                isLightMode
-                  ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C]'
-                  : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676]'
+                isLightMode ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C]' : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676]'
               }`}
             >
-              {inviting ? 'Sending Invite…' : 'Send Admin Invitation'}
+              {inviting ? 'Sending Invite…' : `Send ${roleLabel(inviteRole)} Invite`}
             </button>
           </div>
         </form>
@@ -820,7 +808,6 @@ export default function AdminAccess() {
   );
 }
 
-// ── Admin table sub-component ────────────────────────────────────────────────
 function AdminTable({
   title,
   admins,
@@ -829,7 +816,6 @@ function AdminTable({
   t,
   timeAgo,
   onToggleActive,
-  showActions,
   amber,
   emptyMessage,
 }) {
@@ -846,42 +832,22 @@ function AdminTable({
               : 'border-white/[0.05] bg-[#0A0D10]'
         }`}
       >
-        <h3
-          className={`text-sm font-black uppercase tracking-widest ${
-            amber
-              ? isLightMode
-                ? 'text-amber-700'
-                : 'text-amber-400'
-              : isLightMode
-                ? 'text-[#4A7D5C]'
-                : 'text-[#2CD87D]'
-          }`}
-        >
+        <h3 className={`text-sm font-black uppercase tracking-widest ${amber ? (isLightMode ? 'text-amber-700' : 'text-amber-400') : (isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]')}`}>
           {title}
         </h3>
       </div>
 
       {admins.length === 0 ? (
-        <p className={`p-8 text-center text-sm italic ${t.textMuted}`}>
-          {emptyMessage || 'No admins found.'}
-        </p>
+        <p className={`p-8 text-center text-sm italic ${t.textMuted}`}>{emptyMessage || 'No admin users found.'}</p>
       ) : (
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr
-              className={`text-[10px] uppercase tracking-widest border-b ${
-                isLightMode
-                  ? 'bg-[#F9FBF9] border-[#F0F4F1]'
-                  : 'bg-[#0A0D10] border-white/[0.05]'
-              } ${t.textMuted}`}
-            >
+            <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
               <th className="px-6 py-3 font-bold w-[35%]">Admin</th>
               <th className="px-6 py-3 font-bold w-[20%]">Role</th>
               <th className="px-6 py-3 font-bold w-[15%]">Status</th>
               <th className="px-6 py-3 font-bold w-[15%]">Joined</th>
-              {showActions && (
-                <th className="px-6 py-3 font-bold text-right w-[15%]">Actions</th>
-              )}
+              <th className="px-6 py-3 font-bold text-right w-[15%]">Actions</th>
             </tr>
           </thead>
 
@@ -895,7 +861,6 @@ function AdminTable({
                 t={t}
                 timeAgo={timeAgo}
                 onToggleActive={onToggleActive}
-                showActions={showActions}
               />
             ))}
           </tbody>
@@ -905,26 +870,11 @@ function AdminTable({
   );
 }
 
-// ── Table row sub-component ──────────────────────────────────────────────────
-function AdminRow({
-  admin,
-  currentAdmin,
-  isLightMode,
-  t,
-  timeAgo,
-  onToggleActive,
-  showActions,
-}) {
+function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive }) {
   const isSelf = admin.id === currentAdmin?.id;
 
   return (
-    <tr
-      className={`border-b text-sm transition-colors ${
-        isLightMode
-          ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]'
-          : 'border-white/[0.03] hover:bg-white/[0.02]'
-      }`}
-    >
+    <tr className={`border-b text-sm transition-colors ${isLightMode ? 'border-[#F0F4F1] hover:bg-[#F9FBF9]' : 'border-white/[0.03] hover:bg-white/[0.02]'}`}>
       <td className="px-6 py-4">
         <div className="flex items-center gap-3">
           <div
@@ -938,20 +888,14 @@ function AdminRow({
                   : 'bg-[#2CD87D]/10 text-[#2CD87D]'
             }`}
           >
-            {(admin.full_name || admin.email).substring(0, 2).toUpperCase()}
+            {(admin.full_name || admin.email || 'AD').substring(0, 2).toUpperCase()}
           </div>
 
           <div>
             <p className={`font-bold ${t.textMain} flex items-center gap-1.5`}>
               {admin.full_name || '—'}
               {isSelf && (
-                <span
-                  className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
-                    isLightMode
-                      ? 'bg-[#E4EFE8] text-[#4A7D5C]'
-                      : 'bg-[#2CD87D]/10 text-[#2CD87D]'
-                  }`}
-                >
+                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${isLightMode ? 'bg-[#E4EFE8] text-[#4A7D5C]' : 'bg-[#2CD87D]/10 text-[#2CD87D]'}`}>
                   YOU
                 </span>
               )}
@@ -961,45 +905,37 @@ function AdminRow({
         </div>
       </td>
 
-      <td className="px-6 py-4">
-        <RoleBadge role={admin.role} light={isLightMode} />
-      </td>
+      <td className="px-6 py-4"><RoleBadge role={admin.role} light={isLightMode} /></td>
+      <td className="px-6 py-4"><StatusDot active={admin.is_active} light={isLightMode} /></td>
+      <td className={`px-6 py-4 text-xs ${t.textMuted}`}>{timeAgo(admin.created_at)}</td>
 
-      <td className="px-6 py-4">
-        <StatusDot active={admin.is_active} light={isLightMode} />
+      <td className="px-6 py-4 text-right">
+        <div className="flex items-center justify-end gap-2">
+          {isSelf ? (
+            <span className={`text-[11px] font-semibold ${t.textMuted}`}>Current account</span>
+          ) : (
+            <button
+              onClick={() => onToggleActive(admin)}
+              className={`p-2 rounded-lg transition-all ${t.textMuted} ${
+                admin.is_active
+                  ? 'hover:text-orange-400 hover:bg-orange-500/10'
+                  : 'hover:text-[#2CD87D] hover:bg-[#2CD87D]/10'
+              }`}
+              title={admin.is_active ? 'Deactivate' : 'Reactivate'}
+            >
+              {admin.is_active ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </button>
+          )}
+        </div>
       </td>
-
-      <td className={`px-6 py-4 text-xs ${t.textMuted}`}>
-        {timeAgo(admin.created_at)}
-      </td>
-
-      {showActions && (
-        <td className="px-6 py-4 text-right">
-          <div className="flex items-center justify-end gap-2">
-            {!isSelf && admin.role === 'admin' && (
-              <button
-                onClick={() => onToggleActive(admin)}
-                className={`p-2 rounded-lg transition-all ${t.textMuted} ${
-                  admin.is_active
-                    ? 'hover:text-orange-400 hover:bg-orange-500/10'
-                    : 'hover:text-[#2CD87D] hover:bg-[#2CD87D]/10'
-                }`}
-                title={admin.is_active ? 'Deactivate' : 'Reactivate'}
-              >
-                {admin.is_active ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </button>
-            )}
-          </div>
-        </td>
-      )}
     </tr>
   );
 }
