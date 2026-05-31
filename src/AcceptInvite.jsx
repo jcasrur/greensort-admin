@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabase';
 import logo from './assets/logo.png';
@@ -61,12 +61,19 @@ function normalizeEmail(value) {
 
 export default function AcceptInvite() {
   const navigate = useNavigate();
+  const existingOtpSentRef = useRef(false);
 
-  const queryToken = useMemo(() => {
-    return new URLSearchParams(window.location.search).get('token') || '';
+  const queryParams = useMemo(() => {
+    return new URLSearchParams(window.location.search);
   }, []);
 
+  const queryToken = queryParams.get('token') || '';
+  const queryMode = queryParams.get('mode') || 'new';
+
   const [invite, setInvite] = useState(null);
+  const [accountMode, setAccountMode] = useState(queryMode === 'existing' ? 'existing' : 'new');
+  const [otpType, setOtpType] = useState(queryMode === 'existing' ? 'email' : 'signup');
+
   const [checking, setChecking] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -80,7 +87,6 @@ export default function AcceptInvite() {
 
   const [isWaitingForOtp, setIsWaitingForOtp] = useState(false);
   const [otpCode, setOtpCode] = useState('');
-  const [resendCooldown, setResendCooldown] = useState(0);
 
   const loadInvite = async () => {
     const cleanToken = String(queryToken || '').trim();
@@ -132,19 +138,55 @@ export default function AcceptInvite() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+
+  const sendExistingAccountOtp = async () => {
+    if (!invite) return;
+
+    setError('');
+    setSuccess('');
+    setSubmitting(true);
+
+    try {
+      const cleanEmail = normalizeEmail(invite.email);
+
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          shouldCreateUser: false,
+        },
+      });
+
+      if (otpError) throw otpError;
+
+      setAccountMode('existing');
+      setOtpType('email');
+      setOtpCode('');
+      setIsWaitingForOtp(true);
+      setSuccess('Verification code sent to your existing account email.');
+    } catch (err) {
+      console.error('Existing account OTP error:', err);
+      setError(err.message || 'Failed to send verification code.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   useEffect(() => {
-    if (!isWaitingForOtp || resendCooldown <= 0) return undefined;
-
-    const timer = setInterval(() => {
-      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [isWaitingForOtp, resendCooldown]);
+    if (
+      !checking &&
+      invite &&
+      accountMode === 'existing' &&
+      !isWaitingForOtp &&
+      !existingOtpSentRef.current
+    ) {
+      existingOtpSentRef.current = true;
+      sendExistingAccountOtp();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checking, invite, accountMode, isWaitingForOtp]);
 
   const handleCreatePassword = async (e) => {
     e.preventDefault();
-
     setError('');
     setSuccess('');
 
@@ -190,17 +232,21 @@ export default function AcceptInvite() {
       if (signUpError) {
         const msg = String(signUpError.message || '').toLowerCase();
 
-        if (msg.includes('already') || msg.includes('registered')) {
-          throw new Error('This email already has an account. Please go back to login and sign in.');
+        if (msg.includes('already') || msg.includes('registered') || msg.includes('exists')) {
+          setSubmitting(false);
+          setSuccess('This email already has an account. Sending login verification code instead...');
+          await sendExistingAccountOtp();
+          return;
         }
 
         throw signUpError;
       }
 
-      setSuccess('Verification code sent! Please check your email.');
+      setAccountMode('new');
+      setOtpType('signup');
+      setSuccess('Signup verification code sent! Please check your email.');
       setOtpCode('');
       setIsWaitingForOtp(true);
-      setResendCooldown(30);
     } catch (err) {
       console.error('Accept invite error:', err);
       setError(err.message || 'Failed to create password. Please try again.');
@@ -209,37 +255,8 @@ export default function AcceptInvite() {
     }
   };
 
-  const handleResendVerificationCode = async () => {
-    if (!invite || resendCooldown > 0 || submitting) return;
-
-    setError('');
-    setSuccess('');
-    setSubmitting(true);
-
-    try {
-      const cleanEmail = normalizeEmail(invite.email);
-
-      const { error: resendError } = await supabase.auth.resend({
-        type: 'signup',
-        email: cleanEmail,
-      });
-
-      if (resendError) throw resendError;
-
-      setOtpCode('');
-      setResendCooldown(30);
-      setSuccess('A new verification code has been sent to your email.');
-    } catch (err) {
-      console.error('Resend verification code error:', err);
-      setError(err.message || 'Failed to resend verification code. Please try again later.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
-
     setError('');
     setSuccess('');
 
@@ -250,8 +267,8 @@ export default function AcceptInvite() {
 
     const cleanCode = otpCode.trim();
 
-    if (cleanCode.length !== 8) {
-      setError('Please enter the 8-digit verification code.');
+    if (cleanCode.length < 6) {
+      setError('Please enter the verification code from your email.');
       return;
     }
 
@@ -263,17 +280,21 @@ export default function AcceptInvite() {
       const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
         email: cleanEmail,
         token: cleanCode,
-        type: 'signup',
+        type: otpType,
       });
 
       if (verifyError) throw verifyError;
 
       const user = verifyData.user;
-      const cleanName = fullName.trim();
 
       if (!user?.id) {
         throw new Error('Verification succeeded, but no user session was returned. Please try logging in.');
       }
+
+      const cleanName =
+        fullName.trim() ||
+        user.user_metadata?.full_name ||
+        invite.email.split('@')[0];
 
       const adminPayload = {
         email: cleanEmail,
@@ -323,6 +344,8 @@ export default function AcceptInvite() {
       setSubmitting(false);
     }
   };
+
+  const isExistingMode = accountMode === 'existing';
 
   return (
     <>
@@ -401,7 +424,11 @@ export default function AcceptInvite() {
                 margin: '8px 0 6px',
               }}
             >
-              {isWaitingForOtp ? 'Check your email' : 'Create your password'}
+              {isWaitingForOtp
+                ? 'Check your email'
+                : isExistingMode
+                  ? 'Verify existing account'
+                  : 'Create your password'}
             </h1>
 
             <p
@@ -413,8 +440,10 @@ export default function AcceptInvite() {
               }}
             >
               {isWaitingForOtp
-                ? 'We sent an 8-digit verification code to your email.'
-                : 'Set up your admin account before Google Authenticator verification.'}
+                ? 'Enter the verification code sent to your email.'
+                : isExistingMode
+                  ? 'This email already has an account. We will verify it before admin access setup.'
+                  : 'Set up your admin account before Google Authenticator verification.'}
             </p>
           </div>
 
@@ -521,106 +550,14 @@ export default function AcceptInvite() {
                       fontSize: 12,
                     }}
                   >
-                    Role: {invite.role || 'admin'}
+                    Role: {invite.role || 'admin'} · {isExistingMode ? 'Existing account' : 'New account'}
                   </p>
                 </div>
 
-                <form onSubmit={handleCreatePassword}>
-                  <div style={{ marginBottom: 14 }}>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: 'rgba(52,211,153,.7)',
-                        letterSpacing: '.1em',
-                        textTransform: 'uppercase',
-                        marginBottom: 8,
-                      }}
-                    >
-                      Full Name
-                    </label>
-
-                    <input
-                      className="gs-input"
-                      value={fullName}
-                      onChange={e => setFullName(e.target.value)}
-                      placeholder="Enter full name"
-                      autoComplete="name"
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: 14 }}>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: 'rgba(52,211,153,.7)',
-                        letterSpacing: '.1em',
-                        textTransform: 'uppercase',
-                        marginBottom: 8,
-                      }}
-                    >
-                      Password
-                    </label>
-
-                    <input
-                      className="gs-input"
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="Minimum 8 characters"
-                      autoComplete="new-password"
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: 12 }}>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: 'rgba(52,211,153,.7)',
-                        letterSpacing: '.1em',
-                        textTransform: 'uppercase',
-                        marginBottom: 8,
-                      }}
-                    >
-                      Confirm Password
-                    </label>
-
-                    <input
-                      className="gs-input"
-                      type={showPassword ? 'text' : 'password'}
-                      value={confirmPassword}
-                      onChange={e => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter password"
-                      autoComplete="new-password"
-                    />
-                  </div>
-
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      marginBottom: 20,
-                      color: 'rgba(162,218,189,.45)',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={showPassword}
-                      onChange={e => setShowPassword(e.target.checked)}
-                    />
-                    Show password
-                  </label>
-
+                {isExistingMode ? (
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={sendExistingAccountOtp}
                     disabled={submitting}
                     className="gs-btn-primary"
                     style={{
@@ -637,9 +574,125 @@ export default function AcceptInvite() {
                       fontFamily: "'DM Sans', sans-serif",
                     }}
                   >
-                    {submitting ? 'Sending code...' : 'Create Password & Send Code'}
+                    {submitting ? 'Sending code...' : 'Send Verification Code'}
                   </button>
-                </form>
+                ) : (
+                  <form onSubmit={handleCreatePassword}>
+                    <div style={{ marginBottom: 14 }}>
+                      <label
+                        style={{
+                          display: 'block',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: 'rgba(52,211,153,.7)',
+                          letterSpacing: '.1em',
+                          textTransform: 'uppercase',
+                          marginBottom: 8,
+                        }}
+                      >
+                        Full Name
+                      </label>
+
+                      <input
+                        className="gs-input"
+                        value={fullName}
+                        onChange={e => setFullName(e.target.value)}
+                        placeholder="Enter full name"
+                        autoComplete="name"
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      <label
+                        style={{
+                          display: 'block',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: 'rgba(52,211,153,.7)',
+                          letterSpacing: '.1em',
+                          textTransform: 'uppercase',
+                          marginBottom: 8,
+                        }}
+                      >
+                        Password
+                      </label>
+
+                      <input
+                        className="gs-input"
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder="Minimum 8 characters"
+                        autoComplete="new-password"
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: 12 }}>
+                      <label
+                        style={{
+                          display: 'block',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: 'rgba(52,211,153,.7)',
+                          letterSpacing: '.1em',
+                          textTransform: 'uppercase',
+                          marginBottom: 8,
+                        }}
+                      >
+                        Confirm Password
+                      </label>
+
+                      <input
+                        className="gs-input"
+                        type={showPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter password"
+                        autoComplete="new-password"
+                      />
+                    </div>
+
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        marginBottom: 20,
+                        color: 'rgba(162,218,189,.45)',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={showPassword}
+                        onChange={e => setShowPassword(e.target.checked)}
+                      />
+                      Show password
+                    </label>
+
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="gs-btn-primary"
+                      style={{
+                        width: '100%',
+                        padding: '14px 24px',
+                        borderRadius: 12,
+                        border: 'none',
+                        color: '#052e16',
+                        fontSize: 13,
+                        fontWeight: 800,
+                        textTransform: 'uppercase',
+                        cursor: submitting ? 'not-allowed' : 'pointer',
+                        opacity: submitting ? 0.7 : 1,
+                        fontFamily: "'DM Sans', sans-serif",
+                      }}
+                    >
+                      {submitting ? 'Sending code...' : 'Create Password & Send Code'}
+                    </button>
+                  </form>
+                )}
               </>
             )}
 
@@ -657,7 +710,7 @@ export default function AcceptInvite() {
                       marginBottom: 8,
                     }}
                   >
-                    8-Digit Verification Code
+                    Verification Code
                   </label>
 
                   <input
@@ -669,7 +722,7 @@ export default function AcceptInvite() {
                       setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 8));
                       setError('');
                     }}
-                    placeholder="Enter 8-digit code"
+                    placeholder="Enter code"
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     style={{
@@ -681,29 +734,6 @@ export default function AcceptInvite() {
                   />
                 </div>
 
-                <div style={{ textAlign: 'center', marginTop: -6, marginBottom: 18 }}>
-                  <button
-                    type="button"
-                    onClick={handleResendVerificationCode}
-                    disabled={submitting || resendCooldown > 0}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: resendCooldown > 0
-                        ? 'rgba(162,218,189,.28)'
-                        : 'rgba(52,211,153,.75)',
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: submitting || resendCooldown > 0 ? 'not-allowed' : 'pointer',
-                      fontFamily: "'DM Sans', sans-serif",
-                      padding: 0,
-                    }}
-                  >
-                    {resendCooldown > 0
-                      ? `Resend verification code in ${resendCooldown}s`
-                      : 'Resend verification code'}
-                  </button>
-                </div>
 
                 <button
                   type="submit"

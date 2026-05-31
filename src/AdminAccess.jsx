@@ -151,6 +151,7 @@ export default function AdminAccess() {
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
+  const [resendingInviteId, setResendingInviteId] = useState(null);
 
   const accentText = isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]';
 
@@ -282,8 +283,16 @@ export default function AdminAccess() {
         },
       });
 
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('id, email, role')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      const inviteMode = existingProfile ? 'existing' : 'new';
+
       const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
-      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}`;
+      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}&mode=${inviteMode}`;
 
       const { data: authData } = await supabase.auth.getSession();
       const token = authData.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -365,6 +374,87 @@ export default function AdminAccess() {
     });
 
     fetchData();
+  };
+
+  const handleResendInvite = async (inv) => {
+    if (!isSuperAdmin) return;
+
+    setResendingInviteId(inv.id);
+
+    try {
+      const cleanEmail = String(inv.email || '').toLowerCase().trim();
+      const selectedRole = inv.role || 'admin';
+
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('id, email, role')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      const inviteMode = existingProfile ? 'existing' : 'new';
+
+      const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}&mode=${inviteMode}`;
+
+      const { data: adminRow } = await supabase
+        .from('admin_users')
+        .select('full_name')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      const { data: authData } = await supabase.auth.getSession();
+      const token = authData.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      const edgeFunctionUrl =
+        'https://yaqpvcriphvcqdmpsfxa.supabase.co/functions/v1/send-admin-invite';
+
+      const response = await fetch(edgeFunctionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          to_email: cleanEmail,
+          to_name: adminRow?.full_name || roleLabel(selectedRole),
+          role: selectedRole,
+          role_label: roleLabel(selectedRole),
+          invite_link: inviteLink,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        let errData = {};
+
+        try {
+          errData = JSON.parse(errText);
+        } catch {
+          errData = { error: errText };
+        }
+
+        throw new Error(errData.error || errData.message || 'Failed to resend invitation email.');
+      }
+
+      await supabase.from('admin_activity_log').insert({
+        actor_email: adminUser.email,
+        action: 'resent_admin_invite',
+        target_email: cleanEmail,
+        metadata: {
+          token_id: inv.id,
+          role: selectedRole,
+          role_label: roleLabel(selectedRole),
+          invite_mode: inviteMode,
+        },
+      });
+
+      alert(`Invitation resent to ${cleanEmail}.`);
+    } catch (err) {
+      console.error('Resend invite error:', err);
+      alert(err.message || 'Failed to resend invitation. Try again.');
+    } finally {
+      setResendingInviteId(null);
+    }
   };
 
   const handleRevokeInvite = async (inv) => {
@@ -665,14 +755,28 @@ export default function AdminAccess() {
                               })}
                             </td>
                             <td className="px-6 py-4 text-right">
-                              <button
-                                onClick={() => handleRevokeInvite(inv)}
-                                className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                                  isLightMode ? 'text-red-500 border-red-200 hover:bg-red-50' : 'text-red-400 border-red-500/20 hover:bg-red-500/10'
-                                }`}
-                              >
-                                Revoke
-                              </button>
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => handleResendInvite(inv)}
+                                  disabled={resendingInviteId === inv.id}
+                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
+                                    isLightMode
+                                      ? 'text-[#4A7D5C] border-[#98BAA3]/40 hover:bg-[#E4EFE8]'
+                                      : 'text-[#2CD87D] border-[#2CD87D]/25 hover:bg-[#2CD87D]/10'
+                                  }`}
+                                >
+                                  {resendingInviteId === inv.id ? 'Resending…' : 'Resend'}
+                                </button>
+
+                                <button
+                                  onClick={() => handleRevokeInvite(inv)}
+                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                    isLightMode ? 'text-red-500 border-red-200 hover:bg-red-50' : 'text-red-400 border-red-500/20 hover:bg-red-500/10'
+                                  }`}
+                                >
+                                  Revoke
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
