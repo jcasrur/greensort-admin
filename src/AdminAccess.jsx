@@ -209,7 +209,9 @@ export default function AdminAccess() {
 
       // Send invite email through Supabase Edge Function
       // IMPORTANT: This must point to AcceptInvite.jsx route.
-      const inviteLink = `${window.location.origin}/accept-invite?token=${encodeURIComponent(inv.token)}`;
+      const APP_URL = 'https://greensort-admin.vercel.app';
+
+      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}`;
 
       const { data: authData } = await supabase.auth.getSession();
       const token = authData.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
