@@ -199,6 +199,8 @@ const AdminLogin = () => {
   const [step1Loading, setStep1Loading] = useState(false);
   const [step1Error,   setStep1Error]   = useState('');
   const [setupMessage, setSetupMessage] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState('');
 
   // Step 2
   const [step,        setStep]        = useState(1);
@@ -229,6 +231,39 @@ const AdminLogin = () => {
     const factor = data?.totp?.find(f => f.status === 'verified');
     if (!factor) throw new Error('No verified authenticator found. Please enroll Google Authenticator first.');
     return factor.id;
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+
+    setStep1Error('');
+    setForgotMessage('');
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setStep1Error('Please enter your email first, then click Forgot password.');
+      return;
+    }
+
+    setForgotLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+
+      if (error) throw error;
+
+      setForgotMessage('Recovery code sent. Please check your email.');
+
+      setTimeout(() => {
+        navigate(`/reset-password?email=${encodeURIComponent(cleanEmail)}`);
+      }, 800);
+    } catch (err) {
+      console.error('Forgot password error:', err);
+      setStep1Error(err.message || 'Failed to send recovery code.');
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   /* ══════════════════ STEP 1 ══════════════════ */
@@ -453,6 +488,17 @@ const AdminLogin = () => {
                   </div>
                 )}
 
+                {forgotMessage && (
+                  <div className="gs-animate" style={{ marginBottom:18,padding:'11px 14px',
+                    background:'rgba(52,211,153,.08)',border:'1px solid rgba(52,211,153,.25)',borderRadius:12,
+                    display:'flex',alignItems:'center',gap:10 }}>
+                    <svg width="15" height="15" fill="none" stroke="#34d399" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink:0 }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span style={{ fontSize:13,color:'#34d399',fontWeight:500 }}>{forgotMessage}</span>
+                  </div>
+                )}
+
                 {step1Error && (
                   <div className="gs-animate" style={{ marginBottom:18,padding:'11px 14px',
                     background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.25)',borderRadius:12,
@@ -517,11 +563,27 @@ const AdminLogin = () => {
                       <span style={{ fontSize:13,color:'rgba(162,218,189,.4)',fontWeight:400 }}>Remember me</span>
                     </label>
                     <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
-                      <a href="#" style={{ fontSize:12,color:'rgba(52,211,153,.5)',textDecoration:'none',fontWeight:500,transition:'color .2s' }}
-                        onMouseEnter={e => e.currentTarget.style.color='#34d399'}
-                        onMouseLeave={e => e.currentTarget.style.color='rgba(52,211,153,.5)'}>
-                        Forgot password?
-                      </a>
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        disabled={forgotLoading}
+                        style={{
+                          background:'none',
+                          border:'none',
+                          padding:0,
+                          fontSize:12,
+                          color: forgotLoading ? 'rgba(162,218,189,.3)' : 'rgba(52,211,153,.5)',
+                          textDecoration:'none',
+                          fontWeight:500,
+                          transition:'color .2s',
+                          cursor: forgotLoading ? 'not-allowed' : 'pointer',
+                          fontFamily:"'DM Sans', sans-serif"
+                        }}
+                        onMouseEnter={e => { if (!forgotLoading) e.currentTarget.style.color='#34d399'; }}
+                        onMouseLeave={e => { if (!forgotLoading) e.currentTarget.style.color='rgba(52,211,153,.5)'; }}
+                      >
+                        {forgotLoading ? 'Sending recovery code…' : 'Forgot password?'}
+                      </button>
                       <span
                         style={{
                           fontSize:11,
@@ -531,7 +593,7 @@ const AdminLogin = () => {
                           maxWidth:180,
                         }}
                       >
-                        Use the invite link sent to your email.
+                        Recovery code will be sent to your email.
                       </span>
                     </div>
                   </div>

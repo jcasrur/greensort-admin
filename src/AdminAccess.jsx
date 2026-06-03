@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // RBAC Management Dashboard
 //   • Super Admin can invite role-based admins
-//   • Supported roles: Super Admin, School Admin, Accounting, Receiving Staff, Moderator
+//   • Supported roles: Super Admin, Admin, Mobile Coordinator, Accounting, Receiving Staff, Moderator
 //   • Pending invitations show the selected role
 //   • Admin roster is grouped by role
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,12 +21,12 @@ const ROLE_META = {
     lightClass: 'bg-amber-50 text-amber-700 border-amber-200',
     darkClass: 'bg-amber-500/10 text-amber-400 border-amber-500/25',
   },
-  school_admin: {
-    label: 'School Admin',
-    short: 'SCH',
-    description: 'Can access Dashboard/Reports, User Management, and WISHCRAFT Fund settings.',
-    lightClass: 'bg-blue-50 text-blue-700 border-blue-200',
-    darkClass: 'bg-blue-500/10 text-blue-400 border-blue-500/25',
+  coordinator: {
+    label: 'Mobile Coordinator',
+    short: 'MC',
+    description: 'Can access the Mobile Admin dashboard. This role is for mobile-side admin monitoring and controls.',
+    lightClass: 'bg-teal-50 text-teal-700 border-teal-200',
+    darkClass: 'bg-teal-500/10 text-teal-300 border-teal-500/25',
   },
   accounting: {
     label: 'Accounting',
@@ -52,14 +52,15 @@ const ROLE_META = {
   admin: {
     label: 'Admin',
     short: 'ADM',
-    description: 'Legacy admin role. Use the specific roles above for new accounts.',
+    description: 'Can access school/admin web features, reports, student records, and general admin controls.',
     lightClass: 'bg-[#E4EFE8] text-[#4A7D5C] border-[#98BAA3]/30',
     darkClass: 'bg-[#2CD87D]/10 text-[#2CD87D] border-[#2CD87D]/20',
   },
 };
 
 const ROLE_OPTIONS = [
-  'school_admin',
+  'admin',
+  'coordinator',
   'accounting',
   'receiving_staff',
   'moderator',
@@ -147,7 +148,7 @@ export default function AdminAccess() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteFullName, setInviteFullName] = useState('');
-  const [inviteRole, setInviteRole] = useState('school_admin');
+  const [inviteRole, setInviteRole] = useState('admin');
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
@@ -187,7 +188,7 @@ export default function AdminAccess() {
   const groupedAdmins = useMemo(() => {
     const groups = {
       super_admin: [],
-      school_admin: [],
+      coordinator: [],
       accounting: [],
       receiving_staff: [],
       moderator: [],
@@ -246,9 +247,69 @@ export default function AdminAccess() {
     }
 
     setInviting(true);
-    let createdInvitationId = null;
 
     try {
+      // Special flow for Mobile Coordinator:
+      // The Edge Function creates/updates the Supabase Auth user,
+      // generates a temporary password, saves coordinator access,
+      // syncs the profile role, and sends the credentials by email.
+      if (selectedRole === 'coordinator') {
+        const { data: authData } = await supabase.auth.getSession();
+        const token = authData.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        const edgeFunctionUrl =
+          'https://yaqpvcriphvcqdmpsfxa.supabase.co/functions/v1/create-mobile-coordinator';
+
+        const response = await fetch(edgeFunctionUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            email: cleanEmail,
+            full_name: cleanFullName || 'Mobile Coordinator',
+            invited_by: adminUser.id,
+            actor_email: adminUser.email,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          let errData = {};
+          try {
+            errData = JSON.parse(errText);
+          } catch {
+            errData = { error: errText };
+          }
+
+          throw new Error(
+            errData.error ||
+              errData.message ||
+              'Failed to create Mobile Coordinator account.'
+          );
+        }
+
+        await supabase.from('admin_activity_log').insert({
+          actor_email: adminUser.email,
+          action: 'created_mobile_coordinator',
+          target_email: cleanEmail,
+          metadata: {
+            role: 'coordinator',
+            role_label: roleLabel('coordinator'),
+          },
+        });
+
+        setInviteSuccess(`Mobile Coordinator credentials sent to ${cleanEmail}!`);
+        setInviteEmail('');
+        setInviteFullName('');
+        setInviteRole('admin');
+        fetchData();
+        return;
+      }
+
+      let createdInvitationId = null;
+
       const { data: inv, error: invErr } = await supabase
         .from('admin_invitations')
         .insert({
@@ -336,7 +397,7 @@ export default function AdminAccess() {
       setInviteSuccess(`${roleLabel(selectedRole)} invitation sent to ${cleanEmail}!`);
       setInviteEmail('');
       setInviteFullName('');
-      setInviteRole('school_admin');
+      setInviteRole('admin');
       fetchData();
     } catch (err) {
       console.error('Invite error:', err);
@@ -525,7 +586,7 @@ export default function AdminAccess() {
                 </span>
               </p>
               <p className={`mt-1 text-xs ${t.textMuted}`}>
-                New invites can be assigned as School Admin, Accounting, Receiving Staff, Moderator, or Super Admin.
+                New invites can be assigned as Admin, Mobile Coordinator, Accounting, Receiving Staff, Moderator, or Super Admin.
               </p>
             </div>
 
@@ -548,11 +609,12 @@ export default function AdminAccess() {
             </button>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
             {[
               { label: 'Total Admin Users', value: admins.length },
               { label: 'Super Admins', value: groupedAdmins.super_admin.length, amber: true },
-              { label: 'School Admins', value: groupedAdmins.school_admin.length },
+              { label: 'Admins', value: groupedAdmins.admin.length },
+              { label: 'Mobile Coordinators', value: groupedAdmins.coordinator.length },
               { label: 'Accounting', value: groupedAdmins.accounting.length },
               { label: 'Pending Invites', value: invitations.length },
             ].map((card) => (
@@ -597,7 +659,7 @@ export default function AdminAccess() {
                 Super Admin can assign specific roles so each admin only sees the sections needed for their responsibility.
               </p>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 mt-4">
                 {ROLE_OPTIONS.map((role) => (
                   <div
                     key={role}
@@ -650,14 +712,25 @@ export default function AdminAccess() {
                   />
 
                   <AdminTable
-                    title={`School Admins (${groupedAdmins.school_admin.length})`}
-                    admins={groupedAdmins.school_admin}
+                    title={`Admins (${groupedAdmins.admin.length})`}
+                    admins={groupedAdmins.admin}
                     currentAdmin={adminUser}
                     isLightMode={isLightMode}
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
-                    emptyMessage="No school admins yet."
+                    emptyMessage="No admins yet."
+                  />
+
+                  <AdminTable
+                    title={`Mobile Coordinators (${groupedAdmins.coordinator.length})`}
+                    admins={groupedAdmins.coordinator}
+                    currentAdmin={adminUser}
+                    isLightMode={isLightMode}
+                    t={t}
+                    timeAgo={timeAgo}
+                    onToggleActive={handleToggleActive}
+                    emptyMessage="No mobile coordinators yet."
                   />
 
                   <AdminTable
@@ -692,19 +765,6 @@ export default function AdminAccess() {
                     onToggleActive={handleToggleActive}
                     emptyMessage="No moderators yet."
                   />
-
-                  {groupedAdmins.admin.length > 0 && (
-                    <AdminTable
-                      title={`Legacy Admin Role (${groupedAdmins.admin.length})`}
-                      admins={groupedAdmins.admin}
-                      currentAdmin={adminUser}
-                      isLightMode={isLightMode}
-                      t={t}
-                      timeAgo={timeAgo}
-                      onToggleActive={handleToggleActive}
-                      emptyMessage="No legacy admin users."
-                    />
-                  )}
                 </div>
               )}
 

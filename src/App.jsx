@@ -6,6 +6,7 @@ import ErrorBoundary      from './ErrorBoundary';
 
 import AcceptInvite from './AcceptInvite';
 import AdminLogin        from './AdminLogin';
+import ResetPassword from './ResetPassword';
 import Dashboard         from './Dashboard';
 import AdminRewards      from './AdminRewards';
 import UserManagement    from './UserManagement';
@@ -30,6 +31,7 @@ function App() {
               <Routes>
                 <Route path="/accept-invite" element={<AcceptInvite />} />
                 <Route path="/"             element={<AdminLogin />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/setup-mfa"    element={<MFAEnrollment />} />
                 <Route path="/unauthorized" element={<Unauthorized />} />
 
