@@ -60,7 +60,7 @@ const NAV_GROUPS = [
   {
     label: 'Management',
     items: [
-      { path: '/fund-dashboard', label: 'WISHCRAFT Fund',  icon: Icons.fund,       module: 'fund_dashboard' },
+      { path: '/fund-dashboard', label: 'Waste Type Inventory',  icon: Icons.fund,       module: 'fund_dashboard' },
       { path: '/moderation',     label: 'Moderation',      icon: Icons.moderation, module: 'messages' },
     ],
   },

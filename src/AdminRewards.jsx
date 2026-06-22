@@ -264,7 +264,7 @@ export default function AdminRewards() {
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${isLightMode ? 'bg-[#D8EDDF] text-[#2D6A4F]' : 'bg-[#2D6A4F]/20 text-[#34D399]'}`}>WISHCRAFT</span>
-                <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${isLightMode ? 'bg-[#F3F6F1] text-[#5E7A67]' : 'bg-white/[0.05] text-[#A8BDA2]'}`}>rewards_inventory</span>
+                <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${isLightMode ? 'bg-[#F3F6F1] text-[#5E7A67]' : 'bg-white/[0.05] text-[#A8BDA2]'}`}></span>
               </div>
               <h1 className={`text-3xl font-bold tracking-tight ${t.textMain}`}>Available Waste Types</h1>
               <p className={`text-sm mt-1 max-w-xl ${t.textMuted}`}>
