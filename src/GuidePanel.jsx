@@ -24,35 +24,6 @@ const GUIDES = {
       },
     ],
   },
-  users: {
-    title: 'User Management Guide',
-    sections: [
-      {
-        heading: 'Activity Status',
-        body: 'Each user shows one of four states: Online (currently in the app via presence tracking), Offline (active recently but not right now), Inactive (30+ days since last login), or Deactivated (account blocked). Inactive rows are tinted orange so they stand out immediately.',
-      },
-      {
-        heading: 'Filter Tabs',
-        body: 'Use the tabs above the table to filter by status. The Inactive tab shows a badge count so you know at a glance how many users need attention. The search bar filters by name or email across the current tab.',
-      },
-      {
-        heading: 'Notify Button',
-        body: 'The "Notify" button appears only on Inactive rows. Clicking it opens a modal where you choose between an Inactivity Warning, a Final Notice (48h), or a Custom Message. The notification is delivered in-app — the user will see it the next time they open GreenSort. Once sent, the button flips to a green "Notified" state for the rest of your session.',
-      },
-      {
-        heading: 'Deactivating a User',
-        body: 'The power icon appears on Inactive rows. Deactivating sets the account status to Banned (the user can no longer log in) and sends them an in-app notification explaining why. This is reversible — click the checkmark icon on a Deactivated row to reactivate them and send a welcome-back notification.',
-      },
-      {
-        heading: 'Deleting a User',
-        body: 'Click the red trash icon to permanently delete a profile record. Unlike Deactivation, this cannot be undone. Use this only for confirmed spam accounts or at a user\'s explicit request.',
-      },
-      {
-        heading: 'Inactivity Thresholds',
-        body: 'The Inactive threshold is 30 days. This value is defined as a constant at the top of UserManagement.jsx and can be adjusted to match your platform\'s policy.',
-      },
-    ],
-  },
   moderation: {
     title: 'Content Moderation Guide',
     sections: [

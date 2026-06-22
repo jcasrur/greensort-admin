@@ -6,8 +6,8 @@ let _cachedRole = null;
 let _resolved   = false;
 
 const PERMISSIONS = {
-  super_admin:     ['mrf','inventory','students','accounting','reports','user_management','fund_dashboard','messages','super_admin_panel'],
-  school_admin:    ['reports','user_management','fund_dashboard'],
+  super_admin:     ['mrf','inventory','students','accounting','reports','fund_dashboard','messages','super_admin_panel'],
+  school_admin:    ['reports','fund_dashboard'],
   accounting:      ['accounting','students'],
   receiving_staff: ['mrf','inventory'],
   moderator:       ['reports','messages'],

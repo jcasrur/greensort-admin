@@ -9,7 +9,6 @@ import AdminLogin        from './AdminLogin';
 import ResetPassword from './ResetPassword';
 import Dashboard         from './Dashboard';
 import AdminRewards      from './AdminRewards';
-import UserManagement    from './UserManagement';
 import ContentModeration from './ContentModeration';
 import PresenceTracker   from './PresenceTracker';
 import AdminAccess       from './AdminAccess';
@@ -41,7 +40,6 @@ function App() {
                 <Route path="/surrender-logs" element={<ProtectedRoute><SurrenderLogs /></ProtectedRoute>}/>
                 <Route path="/fund-dashboard" element={<ProtectedRoute module="fund_dashboard"><AdminRewards /></ProtectedRoute>}/>
                 <Route path="/admin-rewards"  element={<Navigate to="/fund-dashboard" replace />} />
-                <Route path="/users"      element={<ProtectedRoute module="user_management"><UserManagement /></ProtectedRoute>}/>
                 <Route path="/moderation" element={<ProtectedRoute module="messages"><ContentModeration /></ProtectedRoute>}/>
                 <Route path="/reports"    element={<ProtectedRoute module="reports"><Dashboard /></ProtectedRoute>}/>
                 <Route path="/access"     element={<ProtectedRoute module="super_admin_panel"><AdminAccess /></ProtectedRoute>}/>
