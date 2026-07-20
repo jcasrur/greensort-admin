@@ -71,11 +71,12 @@ const SYSTEM_ITEMS = [
 ];
 
 const ROLE_COLOURS = {
-  super_admin:     'text-amber-500',
-  school_admin:    'text-blue-400',
-  accounting:      'text-purple-400',
+  super_admin: 'text-amber-500',
+  admin: 'text-blue-500',
+  coordinator: 'text-cyan-500',
+  accounting: 'text-purple-400',
   receiving_staff: 'text-emerald-500',
-  moderator:       'text-slate-400',
+  moderator: 'text-slate-400',
 };
 
 export default function Sidebar() {

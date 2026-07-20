@@ -4,9 +4,12 @@ import { useAdminAuth } from './useAdminAuth';
 import { supabase } from './supabase';
 
 const ROLE_LABELS = {
-  super_admin: 'Super Admin', school_admin: 'School Admin',
-  accounting: 'Accounting', receiving_staff: 'Receiving Staff',
-  moderator: 'Moderator', admin: 'Admin',
+  super_admin: 'Super Admin',
+  admin: 'Admin',
+  coordinator: 'Mobile Coordinator',
+  accounting: 'Accounting',
+  receiving_staff: 'Receiving Staff',
+  moderator: 'Moderator',
 };
 
 export default function Unauthorized() {

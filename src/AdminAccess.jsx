@@ -154,6 +154,12 @@ export default function AdminAccess() {
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [resendingInviteId, setResendingInviteId] = useState(null);
 
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [selectedAdmin, setSelectedAdmin] = useState(null);
+  const [selectedRole, setSelectedRole] = useState('admin');
+  const [updatingRole, setUpdatingRole] = useState(false);
+  const [roleError, setRoleError] = useState('');
+
   const accentText = isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]';
 
   const fetchData = useCallback(async () => {
@@ -437,6 +443,88 @@ export default function AdminAccess() {
     fetchData();
   };
 
+  const openRoleEditor = (admin) => {
+    if (!isSuperAdmin || admin.id === adminUser?.id) return;
+    setSelectedAdmin(admin);
+    setSelectedRole(ROLE_OPTIONS.includes(admin.role) ? admin.role : 'admin');
+    setRoleError('');
+    setShowRoleModal(true);
+  };
+
+  const handleUpdateRole = async (e) => {
+    e.preventDefault();
+    setRoleError('');
+
+    if (!isSuperAdmin) {
+      setRoleError('Only Super Admin can edit admin roles.');
+      return;
+    }
+
+    if (!selectedAdmin || !ROLE_OPTIONS.includes(selectedRole)) {
+      setRoleError('Please select a valid role.');
+      return;
+    }
+
+    if (selectedAdmin.id === adminUser?.id) {
+      setRoleError('You cannot change your own role while logged in.');
+      return;
+    }
+
+    if (selectedAdmin.role === selectedRole) {
+      setShowRoleModal(false);
+      return;
+    }
+
+    setUpdatingRole(true);
+
+    try {
+      const oldRole = selectedAdmin.role;
+
+      const { error: adminUpdateError } = await supabase
+        .from('admin_users')
+        .update({ role: selectedRole, updated_at: new Date().toISOString() })
+        .eq('id', selectedAdmin.id);
+
+      if (adminUpdateError) throw adminUpdateError;
+
+      // Keep the matching profile role synchronized when a profile already exists.
+      const { error: profileUpdateError } = await supabase
+        .from('profiles')
+        .update({ role: selectedRole, updated_at: new Date().toISOString() })
+        .ilike('email', selectedAdmin.email);
+
+      if (profileUpdateError) {
+        // Roll back the admin role so both tables do not become inconsistent.
+        await supabase
+          .from('admin_users')
+          .update({ role: oldRole, updated_at: new Date().toISOString() })
+          .eq('id', selectedAdmin.id);
+        throw profileUpdateError;
+      }
+
+      await supabase.from('admin_activity_log').insert({
+        actor_email: adminUser.email,
+        action: 'updated_admin_role',
+        target_email: selectedAdmin.email,
+        metadata: {
+          previous_role: oldRole,
+          previous_role_label: roleLabel(oldRole),
+          new_role: selectedRole,
+          new_role_label: roleLabel(selectedRole),
+        },
+      });
+
+      setShowRoleModal(false);
+      setSelectedAdmin(null);
+      await fetchData();
+    } catch (err) {
+      console.error('Update role error:', err);
+      setRoleError(err.message || 'Failed to update the admin role.');
+    } finally {
+      setUpdatingRole(false);
+    }
+  };
+
   const handleResendInvite = async (inv) => {
     if (!isSuperAdmin) return;
 
@@ -707,6 +795,7 @@ export default function AdminAccess() {
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
+                    onEditRole={openRoleEditor}
                     amber
                     emptyMessage="No super admins found."
                   />
@@ -719,6 +808,7 @@ export default function AdminAccess() {
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
+                    onEditRole={openRoleEditor}
                     emptyMessage="No admins yet."
                   />
 
@@ -730,6 +820,7 @@ export default function AdminAccess() {
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
+                    onEditRole={openRoleEditor}
                     emptyMessage="No mobile coordinators yet."
                   />
 
@@ -741,6 +832,7 @@ export default function AdminAccess() {
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
+                    onEditRole={openRoleEditor}
                     emptyMessage="No accounting admins yet."
                   />
 
@@ -752,6 +844,7 @@ export default function AdminAccess() {
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
+                    onEditRole={openRoleEditor}
                     emptyMessage="No receiving staff admins yet."
                   />
 
@@ -763,6 +856,7 @@ export default function AdminAccess() {
                     t={t}
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
+                    onEditRole={openRoleEditor}
                     emptyMessage="No moderators yet."
                   />
                 </div>
@@ -960,6 +1054,86 @@ export default function AdminAccess() {
         </form>
       </Modal>
 
+      <Modal open={showRoleModal} onClose={() => !updatingRole && setShowRoleModal(false)} light={isLightMode}>
+        <div className={`px-7 py-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.06]'}`}>
+          <h3 className={`text-xl font-bold ${t.textMain}`}>Edit Admin Role</h3>
+          <p className={`text-sm ${t.textMuted} mt-1`}>
+            Change the access role for <strong>{selectedAdmin?.full_name || selectedAdmin?.email}</strong>.
+          </p>
+        </div>
+
+        <form onSubmit={handleUpdateRole} className="px-7 py-6 space-y-5">
+          <div className={`p-4 rounded-2xl border ${isLightMode ? 'bg-[#F9FBF9] border-[#E5ECE7]' : 'bg-[#0A0D10] border-white/[0.06]'}`}>
+            <p className={`font-bold text-sm ${t.textMain}`}>{selectedAdmin?.full_name || '—'}</p>
+            <p className={`text-xs mt-1 ${t.textMuted}`}>{selectedAdmin?.email}</p>
+          </div>
+
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>New Role *</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ROLE_OPTIONS.map((role) => {
+                const selected = selectedRole === role;
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setSelectedRole(role)}
+                    className={`p-4 rounded-2xl border-2 text-left transition-all ${
+                      selected
+                        ? isLightMode
+                          ? 'border-[#6C9A7D] bg-[#E4EFE8]'
+                          : 'border-[#2CD87D] bg-[#2CD87D]/10'
+                        : isLightMode
+                          ? 'border-[#E5ECE7] bg-[#F9FBF9] hover:bg-[#F0F4F1]'
+                          : 'border-white/[0.06] bg-[#0A0D10] hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <RoleBadge role={role} light={isLightMode} />
+                      {selected && (
+                        <svg className={`w-4 h-4 ${accentText}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>{roleDescription(role)}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {roleError && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <p className="text-red-400 text-sm font-medium">{roleError}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowRoleModal(false)}
+              disabled={updatingRole}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm border transition-all disabled:opacity-60 ${
+                isLightMode ? 'border-[#E5ECE7] text-[#6B7A74] hover:bg-[#F0F4F1]' : 'border-white/[0.07] text-[#8A9B96] hover:bg-white/[0.03]'
+              }`}
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              disabled={updatingRole || selectedRole === selectedAdmin?.role}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-60 ${
+                isLightMode ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C]' : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676]'
+              }`}
+            >
+              {updatingRole ? 'Saving Changes…' : 'Save Role'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       <style
         dangerouslySetInnerHTML={{
           __html: `
@@ -980,6 +1154,7 @@ function AdminTable({
   t,
   timeAgo,
   onToggleActive,
+  onEditRole,
   amber,
   emptyMessage,
 }) {
@@ -1025,6 +1200,7 @@ function AdminTable({
                 t={t}
                 timeAgo={timeAgo}
                 onToggleActive={onToggleActive}
+                onEditRole={onEditRole}
               />
             ))}
           </tbody>
@@ -1034,7 +1210,7 @@ function AdminTable({
   );
 }
 
-function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive }) {
+function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive, onEditRole }) {
   const isSelf = admin.id === currentAdmin?.id;
 
   return (
@@ -1078,7 +1254,22 @@ function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive
           {isSelf ? (
             <span className={`text-[11px] font-semibold ${t.textMuted}`}>Current account</span>
           ) : (
-            <button
+            <>
+              <button
+                onClick={() => onEditRole(admin)}
+                className={`p-2 rounded-lg transition-all ${t.textMuted} ${
+                  isLightMode
+                    ? 'hover:text-[#4A7D5C] hover:bg-[#E4EFE8]'
+                    : 'hover:text-[#2CD87D] hover:bg-[#2CD87D]/10'
+                }`}
+                title="Edit role"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+
+              <button
               onClick={() => onToggleActive(admin)}
               className={`p-2 rounded-lg transition-all ${t.textMuted} ${
                 admin.is_active
@@ -1097,6 +1288,7 @@ function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive
                 </svg>
               )}
             </button>
+            </>
           )}
         </div>
       </td>
