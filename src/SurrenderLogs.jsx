@@ -250,16 +250,16 @@ export default function SurrenderLogs() {
   };
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden selection:bg-[#2CD87D] selection:text-black`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden selection:bg-[#2CD87D] selection:text-black`}>
       <Sidebar />
 
-      <div className="flex-1 h-full overflow-y-auto no-scrollbar">
-        <div className="p-6 lg:p-10 max-w-[1700px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto no-scrollbar pt-16 md:pt-0">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-[1700px] mx-auto">
 
           {/* Header */}
           <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-4">
             <div>
-              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Surrender Logs</h2>
+              <h2 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>Surrender Logs</h2>
               <p className={`${t.textMuted} mt-1 text-sm font-medium`}>Full WISHCRAFT Fund contribution audit trail</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -273,7 +273,7 @@ export default function SurrenderLogs() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <Stat label="Total Submissions" value={stats.total.toLocaleString()} sub="All time" iconBg={t.iconBg1} t={t}
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>}
             />
@@ -292,7 +292,7 @@ export default function SurrenderLogs() {
           <div className={`rounded-2xl border p-4 mb-6 ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.05]'}`}>
             <div className="flex flex-wrap gap-3 items-end">
 
-              <div className="flex-1 min-w-[200px]">
+              <div className="w-full sm:flex-1 sm:min-w-[200px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Search</label>
                 <div className="relative">
                   <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${t.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -300,21 +300,21 @@ export default function SurrenderLogs() {
                 </div>
               </div>
 
-              <div className="min-w-[130px]">
+              <div className="w-full sm:w-auto sm:min-w-[130px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Waste Type</label>
                 <select className={`${inputCls} cursor-pointer`} value={wasteType} onChange={e => setWasteType(e.target.value)}>
                   {WASTE_TYPES.map(w => <option key={w}>{w}</option>)}
                 </select>
               </div>
 
-              <div className="min-w-[160px]">
+              <div className="w-full sm:w-auto sm:min-w-[160px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Fund Status</label>
                 <select className={`${inputCls} cursor-pointer`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                   {WISHCRAFT_STATUSES.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
 
-              <div className="min-w-[200px]">
+              <div className="w-full sm:w-auto sm:min-w-[200px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Contribution Type</label>
                 <select className={`${inputCls} cursor-pointer`} value={allocationFilter} onChange={e => setAllocationFilter(e.target.value)}>
                   {ALLOCATION_TYPES.map(a => <option key={a}>{a}</option>)}
@@ -357,7 +357,7 @@ export default function SurrenderLogs() {
                   <p className={`text-sm italic font-medium ${t.textMuted}`}>No logs match your current filters.</p>
                 </div>
               ) : (
-                <table className="w-full text-left border-collapse">
+                <table className="w-full min-w-[860px] text-left border-collapse">
                   <thead>
                     <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0F0D] border-white/[0.04]'} ${t.textMuted}`}>
                       <th className="px-6 py-4 font-bold">Date & Time</th>

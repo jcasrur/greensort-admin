@@ -125,7 +125,7 @@ const Modal = ({ open, onClose, children, light }) => {
       onClick={onClose}
     >
       <div
-        className={`w-full max-w-xl rounded-3xl border shadow-2xl ${
+        className={`w-full max-w-xl max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl border shadow-2xl ${
           light ? 'bg-white border-[#F0F4F1]' : 'bg-[#0F1814] border-white/[0.07]'
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -639,7 +639,7 @@ export default function AdminAccess() {
 
   if (authLoading) {
     return (
-      <div className={`flex h-screen w-full ${t.bg} items-center justify-center`}>
+      <div className={`flex h-[100dvh] w-full ${t.bg} items-center justify-center`}>
         <div className={`text-sm font-bold tracking-widest animate-pulse ${accentText}`}>VERIFYING ACCESS...</div>
       </div>
     );
@@ -647,7 +647,7 @@ export default function AdminAccess() {
 
   if (!isSuperAdmin) {
     return (
-      <div className={`flex h-screen w-full ${t.bg} items-center justify-center`}>
+      <div className={`flex h-[100dvh] w-full ${t.bg} items-center justify-center`}>
         <div className="text-center max-w-md px-6">
           <p className="text-red-400 font-bold text-lg mb-2">Access Denied</p>
           <p className={`text-sm ${t.textMuted}`}>
@@ -659,14 +659,14 @@ export default function AdminAccess() {
   }
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar />
 
-      <div className="flex-1 h-full overflow-y-auto relative z-10 no-scrollbar">
-        <div className="p-6 lg:p-10 max-w-[1600px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto relative z-10 no-scrollbar pt-16 md:pt-0">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-4">
             <div>
-              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Admin Access Control</h2>
+              <h2 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>Admin Access Control</h2>
               <p className={`${t.textMuted} mt-1 text-sm font-medium`}>
                 Manage role-based access for the GreenSort Admin Portal ·{' '}
                 <span className={accentText}>
@@ -697,7 +697,7 @@ export default function AdminAccess() {
             </button>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
             {[
               { label: 'Total Admin Users', value: admins.length },
               { label: 'Super Admins', value: groupedAdmins.super_admin.length, amber: true },
@@ -878,7 +878,8 @@ export default function AdminAccess() {
                   {invitations.length === 0 ? (
                     <p className={`p-10 text-center italic text-sm ${t.textMuted}`}>No pending admin invitations.</p>
                   ) : (
-                    <table className="w-full text-left border-collapse">
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[860px] text-left border-collapse">
                       <thead>
                         <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
                           <th className="px-6 py-3 font-bold">Invited Email</th>
@@ -935,7 +936,8 @@ export default function AdminAccess() {
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                      </table>
+                    </div>
                   )}
                 </ThemedCard>
               )}
@@ -1179,7 +1181,8 @@ function AdminTable({
       {admins.length === 0 ? (
         <p className={`p-8 text-center text-sm italic ${t.textMuted}`}>{emptyMessage || 'No admin users found.'}</p>
       ) : (
-        <table className="w-full text-left border-collapse">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-left border-collapse">
           <thead>
             <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0D10] border-white/[0.05]'} ${t.textMuted}`}>
               <th className="px-6 py-3 font-bold w-[35%]">Admin</th>
@@ -1204,7 +1207,8 @@ function AdminTable({
               />
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       )}
     </ThemedCard>
   );

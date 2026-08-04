@@ -37,7 +37,7 @@ function App() {
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>}/>
                 <Route path="/students"  element={<ProtectedRoute module="students"><StudentsRecord /></ProtectedRoute>}/>
                 <Route path="/accounting" element={<ProtectedRoute module="accounting"><AccountingRecords /></ProtectedRoute>}/>
-                <Route path="/surrender-logs" element={<ProtectedRoute><SurrenderLogs /></ProtectedRoute>}/>
+                <Route path="/surrender-logs" element={<ProtectedRoute module="mrf"><SurrenderLogs /></ProtectedRoute>}/>
                 <Route path="/fund-dashboard" element={<ProtectedRoute module="fund_dashboard"><AdminRewards /></ProtectedRoute>}/>
                 <Route path="/admin-rewards"  element={<Navigate to="/fund-dashboard" replace />} />
                 <Route path="/moderation" element={<ProtectedRoute module="messages"><ContentModeration /></ProtectedRoute>}/>

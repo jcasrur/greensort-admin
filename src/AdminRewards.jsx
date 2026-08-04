@@ -253,11 +253,11 @@ export default function AdminRewards() {
   };
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar />
 
-      <div className="flex-1 h-full overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
-        <div className="p-6 lg:p-8 max-w-[1400px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto pt-16 md:pt-0" style={{ scrollbarWidth: 'none' }}>
+        <div className="p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto">
 
           {/* Header */}
           <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
@@ -266,7 +266,7 @@ export default function AdminRewards() {
                 <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${isLightMode ? 'bg-[#D8EDDF] text-[#2D6A4F]' : 'bg-[#2D6A4F]/20 text-[#34D399]'}`}>WISHCRAFT</span>
                 <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${isLightMode ? 'bg-[#F3F6F1] text-[#5E7A67]' : 'bg-white/[0.05] text-[#A8BDA2]'}`}></span>
               </div>
-              <h1 className={`text-3xl font-bold tracking-tight ${t.textMain}`}>Available Waste Types</h1>
+              <h1 className={`text-2xl sm:text-3xl font-bold tracking-tight ${t.textMain}`}>Available Waste Types</h1>
               <p className={`text-sm mt-1 max-w-xl ${t.textMuted}`}>
                 Manage accepted recyclable materials and their estimated contribution value per kg shown in the student mobile app.
               </p>
@@ -284,7 +284,7 @@ export default function AdminRewards() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             {[
               { label: 'Total Materials',  value: stats.total,                           sub: 'In database',          accent: isLightMode ? 'bg-[#D8EDDF] text-[#2D6A4F]' : 'bg-[#2D6A4F]/20 text-[#34D399]' },
               { label: 'Live on Mobile',   value: stats.live,                            sub: 'Visible to students',  accent: isLightMode ? 'bg-[#DDE9F5] text-[#2A5FA8]' : 'bg-[#4A9ECC]/10 text-[#4A9ECC]' },
@@ -293,7 +293,7 @@ export default function AdminRewards() {
             ].map(c => (
               <div key={c.label} className={`rounded-2xl border p-5 ${isLightMode ? 'bg-white border-[#E8F0E9] shadow-sm' : 'bg-[#0F1F0F] border-white/[0.05]'}`}>
                 <div className={`inline-flex text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full mb-3 ${c.accent}`}>{c.label}</div>
-                <p className={`text-3xl font-bold leading-none ${t.textMain}`}>{c.value}</p>
+                <p className={`text-2xl sm:text-3xl font-bold leading-none ${t.textMain}`}>{c.value}</p>
                 <p className={`text-[11px] mt-1.5 ${t.textMuted}`}>{c.sub}</p>
               </div>
             ))}

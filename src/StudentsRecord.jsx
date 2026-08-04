@@ -281,7 +281,7 @@ function StudentDrawer({ student, onClose, onArchive, isLightMode, t }) {
       <div className={`fixed right-0 top-0 h-full w-full max-w-xl z-[110] flex flex-col shadow-2xl overflow-hidden transition-all duration-300
         ${isLightMode ? 'bg-white' : 'bg-[#0F1814]'}`}>
 
-        <div className={`p-6 border-b ${divider} flex items-start justify-between flex-shrink-0`}>
+        <div className={`p-4 sm:p-6 border-b ${divider} flex items-start justify-between flex-shrink-0`}>
           <div className="flex items-center gap-3">
             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-bold flex-shrink-0
               ${isLightMode ? 'bg-[#D8EDDF] text-[#2D6A4F]' : 'bg-[#2D6A4F]/30 text-[#52B788]'}`}>
@@ -298,7 +298,7 @@ function StudentDrawer({ student, onClose, onArchive, isLightMode, t }) {
           </button>
         </div>
 
-        <div className={`px-6 py-3 border-b ${divider} flex flex-wrap gap-x-6 gap-y-1`}>
+        <div className={`px-4 sm:px-6 py-3 border-b ${divider} flex flex-wrap gap-x-6 gap-y-1`}>
           {[
             { label: 'Section',      value: student.section || '—' },
             { label: 'Grade Level',  value: student.grade_level || '—' },
@@ -312,7 +312,7 @@ function StudentDrawer({ student, onClose, onArchive, isLightMode, t }) {
           ))}
         </div>
 
-        <div className={`px-6 py-4 border-b ${divider} grid grid-cols-2 gap-3`}>
+        <div className={`px-4 sm:px-6 py-4 border-b ${divider} grid grid-cols-1 sm:grid-cols-2 gap-3`}>
           {[
             { label: 'Total KG Contributed',      value: `${totalKg.toFixed(2)} kg` },
             { label: 'Total Points',              value: `${Math.round(totalPts)} pts` },
@@ -326,7 +326,7 @@ function StudentDrawer({ student, onClose, onArchive, isLightMode, t }) {
           ))}
         </div>
 
-        <div className={`px-6 py-3 border-b ${divider} flex flex-wrap gap-2`}>
+        <div className={`px-4 sm:px-6 py-3 border-b ${divider} flex flex-wrap gap-2`}>
           <button onClick={exportHistoryCsv} disabled={!logs.length} className={`px-3 py-2 rounded-xl text-[11px] font-bold border disabled:opacity-40 ${isLightMode ? 'bg-white border-[#DDE3DA] text-[#2D6A4F] hover:bg-[#F0F9F3]' : 'bg-white/[0.03] border-white/[0.07] text-[#52B788] hover:bg-white/[0.06]'}`}>
             Export History CSV
           </button>
@@ -335,7 +335,7 @@ function StudentDrawer({ student, onClose, onArchive, isLightMode, t }) {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-3" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3" style={{ scrollbarWidth: 'none' }}>
           <h4 className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-3`}>
             Submission History ({logs.length})
           </h4>
@@ -881,15 +881,15 @@ export default function StudentsRecord() {
   };
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar/>
 
-      <div className="flex-1 h-full overflow-y-auto no-scrollbar">
-        <div className="p-6 lg:p-10 max-w-[1700px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto no-scrollbar pt-16 md:pt-0">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-[1700px] mx-auto">
 
           <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-4">
             <div>
-              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Students Record</h2>
+              <h2 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>Students Record</h2>
               <p className={`${t.textMuted} mt-1 text-sm font-medium`}>Student directory with full WISHCRAFT submission history</p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -907,7 +907,7 @@ export default function StudentsRecord() {
             <input ref={fileInputRef} type="file" accept=".csv,.xls,.txt" className="hidden" onChange={e => handleImportFile(e.target.files?.[0])}/>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {[
               { label: 'Total Students',    value: stats.total,                         iconBg: t.iconBg1, icon: '🎓' },
               { label: 'Active Students',   value: stats.active,                        iconBg: t.iconBg1, icon: '✅' },
@@ -925,26 +925,26 @@ export default function StudentsRecord() {
           </div>
 
           <div className={`rounded-2xl border p-4 mb-6 flex flex-wrap gap-3 items-end ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.05]'}`}>
-            <div className="flex-1 min-w-[200px]">
+            <div className="w-full sm:flex-1 sm:min-w-[200px]">
               <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Search</label>
               <div className="relative">
                 <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${t.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 <input className={`${inputCls} pl-8 w-full`} placeholder="Name, email, LRN, or section..." value={search} onChange={e => setSearch(e.target.value)}/>
               </div>
             </div>
-            <div className="min-w-[140px]">
+            <div className="w-full sm:w-auto sm:min-w-[140px]">
               <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Grade Level</label>
               <select className={`${inputCls} cursor-pointer w-full`} value={gradeFilter} onChange={e => setGradeFilter(e.target.value)}>
                 {grades.map(g => <option key={g}>{g}</option>)}
               </select>
             </div>
-            <div className="min-w-[160px]">
+            <div className="w-full sm:w-auto sm:min-w-[160px]">
               <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Section</label>
               <select className={`${inputCls} cursor-pointer w-full`} value={sectionFilter} onChange={e => setSectionFilter(e.target.value)}>
                 {sections.map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
-            <div className="min-w-[140px]">
+            <div className="w-full sm:w-auto sm:min-w-[140px]">
               <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Status</label>
               <select className={`${inputCls} cursor-pointer w-full`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                 {statuses.map(s => <option key={s}>{s}</option>)}
@@ -963,7 +963,7 @@ export default function StudentsRecord() {
               ) : paginated.length === 0 ? (
                 <div className={`flex items-center justify-center h-64 text-sm italic ${t.textMuted}`}>No students match your filters.</div>
               ) : (
-                <table className="w-full text-left border-collapse">
+                <table className="w-full min-w-[860px] text-left border-collapse">
                   <thead>
                     <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0F0D] border-white/[0.04]'} ${t.textMuted}`}>
                       <th className="px-6 py-4 font-bold">Student</th>

@@ -230,17 +230,17 @@ const Dashboard = () => {
   ];
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar />
 
-      <div className="flex-1 h-full overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
-        <div className="p-6 lg:p-8 max-w-[1400px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto pt-16 md:pt-0" style={{ scrollbarWidth: 'none' }}>
+        <div className="p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto">
           <div className="mb-8 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div>
               <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-3 ${t.chipBg} ${t.accentText}`}>
                 WishCraft Admin Dashboard
               </div>
-              <h1 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>WishCraft Overview</h1>
+              <h1 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>WishCraft Overview</h1>
               <p className={`${t.textMuted} mt-1 text-sm max-w-2xl`}>
                 School-based recycling overview for MRF receiving, inventory storage, student records, accounting, and WISHCRAFT fund monitoring.
               </p>

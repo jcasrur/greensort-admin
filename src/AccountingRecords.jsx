@@ -137,7 +137,7 @@ function RecordModal({ record, onClose, onUpdated, isLightMode, t, canEdit }) {
                 className={`w-full px-3 py-2 rounded-xl border text-sm resize-none outline-none ${isLightMode ? 'bg-[#F4F6F2] border-[#DDE3DA] text-[#1A2418] placeholder:text-[#A8BCAA]' : 'bg-[#0F1512] border-white/[0.07] text-[#E8F0E5] placeholder:text-[#3D5042]'}`}
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-[#2D6A4F] hover:bg-[#245A41] disabled:opacity-40 transition-all">
                 {saving ? 'Saving…' : 'Save Changes'}
               </button>
@@ -245,16 +245,16 @@ export default function AccountingRecords() {
   };
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar/>
 
-      <div className="flex-1 h-full overflow-y-auto no-scrollbar">
-        <div className="p-6 lg:p-10 max-w-[1800px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto no-scrollbar pt-16 md:pt-0">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-[1800px] mx-auto">
 
           {/* Header */}
           <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-4">
             <div>
-              <h2 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Accounting Records</h2>
+              <h2 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>Accounting Records</h2>
               <p className={`${t.textMuted} mt-1 text-sm font-medium`}>WISHCRAFT Fund credit pipeline — track every submission from Verified to Credited</p>
             </div>
             <div className="flex gap-2">
@@ -270,7 +270,7 @@ export default function AccountingRecords() {
           </div>
 
           {/* Fund Pipeline summary cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-8">
             {[
               { label: 'Total Records',      value: summary.total,             color: t.iconBg1 },
               { label: 'Verified',           value: summary.verified,          color: isLightMode ? 'bg-emerald-50 text-emerald-700' : 'bg-emerald-500/10 text-emerald-400' },
@@ -291,20 +291,20 @@ export default function AccountingRecords() {
           {/* Filters */}
           <div className={`rounded-2xl border p-4 mb-6 ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.05]'}`}>
             <div className="flex flex-wrap gap-3 items-end">
-              <div className="flex-1 min-w-[200px]">
+              <div className="w-full sm:flex-1 sm:min-w-[200px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Search</label>
                 <div className="relative">
                   <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${t.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                   <input className={`${inputCls} pl-8 w-full`} placeholder="Student name, email, LRN, receipt no..." value={search} onChange={e => setSearch(e.target.value)}/>
                 </div>
               </div>
-              <div className="min-w-[155px]">
+              <div className="w-full sm:w-auto sm:min-w-[155px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Fund Status</label>
                 <select className={`${inputCls} cursor-pointer`} value={status} onChange={e => setStatus(e.target.value)}>
                   {STATUSES.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
-              <div className="min-w-[190px]">
+              <div className="w-full sm:w-auto sm:min-w-[190px]">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Contribution Type</label>
                 <select className={`${inputCls} cursor-pointer`} value={alloc} onChange={e => setAlloc(e.target.value)}>
                   {ALLOCS.map(a => <option key={a}>{a}</option>)}
@@ -338,7 +338,7 @@ export default function AccountingRecords() {
               ) : paginated.length === 0 ? (
                 <div className={`flex items-center justify-center h-64 text-sm italic ${t.textMuted}`}>No records match your filters.</div>
               ) : (
-                <table className="w-full text-left border-collapse">
+                <table className="w-full min-w-[860px] text-left border-collapse">
                   <thead>
                     <tr className={`text-[10px] uppercase tracking-widest border-b ${isLightMode ? 'bg-[#F9FBF9] border-[#F0F4F1]' : 'bg-[#0A0F0D] border-white/[0.04]'} ${t.textMuted}`}>
                       <th className="px-5 py-4 font-bold">Date</th>

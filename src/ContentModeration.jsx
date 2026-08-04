@@ -1287,13 +1287,13 @@ export default function ContentModeration() {
   };
 
   return (
-    <div className={`flex h-screen w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
+    <div className={`flex h-[100dvh] w-full font-sans ${t.bg} transition-colors duration-300 overflow-hidden`}>
       <Sidebar />
 
-      <div className="flex-1 h-full overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
-        <div className="p-6 lg:p-8 max-w-[1500px] mx-auto">
+      <div className="flex-1 min-w-0 h-full overflow-y-auto pt-16 md:pt-0" style={{ scrollbarWidth: 'none' }}>
+        <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px] mx-auto">
           <div className="mb-7">
-            <h1 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>
+            <h1 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>
               Content Moderation
             </h1>
             <p className={`${t.textMuted} mt-1 font-medium text-sm`}>

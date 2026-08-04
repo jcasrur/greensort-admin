@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTheme } from './ThemeContext';
 import { useAdminAuth } from './useAdminAuth';
@@ -6,10 +6,11 @@ import { useAdminAuth } from './useAdminAuth';
 import logo      from './assets/logo.png';
 import logoGreen from './assets/logo-green.png';
 
-const NavItem = ({ icon, label, path, currentPath, navigate, t, badge, isLightMode }) => {
+const NavItem = ({ icon, label, path, currentPath, navigate, badge, isLightMode }) => {
   const active = currentPath === path || (path !== '/dashboard' && currentPath.startsWith(path));
   return (
     <button
+      type="button"
       onClick={() => navigate(path)}
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mx-3 transition-all duration-200 text-left
         ${active
@@ -60,8 +61,8 @@ const NAV_GROUPS = [
   {
     label: 'Management',
     items: [
-      { path: '/fund-dashboard', label: 'Waste Type Inventory',  icon: Icons.fund,       module: 'fund_dashboard' },
-      { path: '/moderation',     label: 'Moderation',      icon: Icons.moderation, module: 'messages' },
+      { path: '/fund-dashboard', label: 'Waste Type Inventory', icon: Icons.fund, module: 'fund_dashboard' },
+      { path: '/moderation', label: 'Moderation', icon: Icons.moderation, module: 'messages' },
     ],
   },
 ];
@@ -79,39 +80,44 @@ const ROLE_COLOURS = {
   moderator: 'text-slate-400',
 };
 
-export default function Sidebar() {
-  const navigate  = useNavigate();
-  const location  = useLocation();
-  const { isLightMode, toggleTheme, t } = useTheme();
-  const { adminUser, role, roleLabel, can } = useAdminAuth();
+function SidebarContent({ isLightMode, toggleTheme, t, adminUser, role, roleLabel, can, location, navigate, onClose }) {
   const roleDotCls = ROLE_COLOURS[role] || 'text-emerald-400';
+  const borderCls = isLightMode ? 'border-[#E8F0E9]' : 'border-white/[0.05]';
 
   const handleSignOut = async () => {
     if (window.confirm('Sign out of GreenSort Admin?')) {
       const { supabase } = await import('./supabase');
       await supabase.auth.signOut();
+      onClose?.();
       navigate('/');
     }
   };
 
-  const borderCls = isLightMode ? 'border-[#E8F0E9]' : 'border-white/[0.05]';
-
   return (
-    <div className={`w-56 h-full ${isLightMode ? 'bg-white border-[#E8F0E9]' : 'bg-[#0A140A] border-white/[0.06]'} border-r flex flex-col shrink-0 transition-colors duration-300`}>
-
+    <>
       <div className="px-5 py-5 flex items-center gap-2.5">
         <div className={`w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0 ${isLightMode ? 'bg-[#D8EDDF]' : 'bg-[#5E9E7A]/20'}`}>
           <img src={isLightMode ? logoGreen : logo} alt="GreenSort Logo" className="w-full h-full object-cover"/>
         </div>
-        <div>
+        <div className="min-w-0">
           <h1 className={`text-sm font-semibold tracking-tight ${isLightMode ? 'text-[#1A2A1A]' : 'text-[#E8F0E5]'}`}>GreenSort</h1>
           <p className={`text-[9px] tracking-widest uppercase ${isLightMode ? 'text-[#4A5D4E]' : 'text-[#A8BDA2]'}`}>Admin Panel</p>
         </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close navigation menu"
+            className={`ml-auto p-2 rounded-xl ${isLightMode ? 'text-[#4A5D4E] hover:bg-[#F3F6F1]' : 'text-[#A8BDA2] hover:bg-white/[0.05]'}`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        )}
       </div>
 
       <div className={`mx-4 h-px ${borderCls} mb-2`}/>
 
-      <nav className="flex-1 overflow-y-auto px-3 space-y-0.5 pb-3" style={{ scrollbarWidth:'none' }}>
+      <nav className="flex-1 overflow-y-auto px-3 space-y-0.5 pb-3 overscroll-contain" style={{ scrollbarWidth:'none' }}>
         {NAV_GROUPS.map(group => {
           const visible = group.items.filter(item => item.module === null ? true : can(item.module));
           if (!visible.length) return null;
@@ -137,7 +143,7 @@ export default function Sidebar() {
       </nav>
 
       <div className={`p-3 border-t ${borderCls} space-y-2`}>
-        <button onClick={toggleTheme} className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all ${isLightMode ? 'text-[#4A5D4E] hover:bg-[#F3F6F1]' : 'text-[#A8BDA2] hover:bg-white/[0.04]'}`}>
+        <button type="button" onClick={toggleTheme} className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all ${isLightMode ? 'text-[#4A5D4E] hover:bg-[#F3F6F1]' : 'text-[#A8BDA2] hover:bg-white/[0.04]'}`}>
           <span>{isLightMode ? 'Light mode' : 'Dark mode'}</span>
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             {isLightMode
@@ -155,11 +161,101 @@ export default function Sidebar() {
             <p className={`text-xs font-medium truncate ${isLightMode ? 'text-[#1A2A1A]' : 'text-[#E8F0E5]'}`}>{adminUser?.full_name || 'Admin'}</p>
             <p className={`text-[9px] font-medium ${roleDotCls}`}>{roleLabel}</p>
           </div>
-          <button onClick={handleSignOut} className={`p-1.5 rounded-lg transition-all ${isLightMode ? 'text-[#5E7A67] hover:text-red-500 hover:bg-red-50' : 'text-[#A8BDA2] hover:text-red-400 hover:bg-red-400/10'}`} title="Sign out">
+          <button type="button" onClick={handleSignOut} className={`p-1.5 rounded-lg transition-all ${isLightMode ? 'text-[#5E7A67] hover:text-red-500 hover:bg-red-50' : 'text-[#A8BDA2] hover:text-red-400 hover:bg-red-400/10'}`} title="Sign out" aria-label="Sign out">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
           </button>
         </div>
       </div>
-    </div>
+    </>
+  );
+}
+
+export default function Sidebar() {
+  const navigate  = useNavigate();
+  const location  = useLocation();
+  const { isLightMode, toggleTheme, t } = useTheme();
+  const { adminUser, role, roleLabel, can } = useAdminAuth();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const currentTitle = useMemo(() => {
+    const allItems = [...NAV_GROUPS.flatMap(group => group.items), ...SYSTEM_ITEMS];
+    return allItems.find(item => location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path)))?.label || 'Admin Panel';
+  }, [location.pathname]);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = event => {
+      if (event.key === 'Escape') setMobileOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [mobileOpen]);
+
+  const navigateAndClose = path => {
+    setMobileOpen(false);
+    navigate(path);
+  };
+
+  const sharedProps = {
+    isLightMode,
+    toggleTheme,
+    t,
+    adminUser,
+    role,
+    roleLabel,
+    can,
+    location,
+    navigate: navigateAndClose,
+  };
+
+  const panelClass = `${isLightMode ? 'bg-white border-[#E8F0E9]' : 'bg-[#0A140A] border-white/[0.06]'} transition-colors duration-300`;
+
+  return (
+    <>
+      <header className={`md:hidden fixed inset-x-0 top-0 z-40 h-16 border-b px-4 flex items-center gap-3 ${isLightMode ? 'bg-white/95 border-[#E8F0E9]' : 'bg-[#0A140A]/95 border-white/[0.06]'} backdrop-blur-xl`}>
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open navigation menu"
+          aria-expanded={mobileOpen}
+          className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-colors ${isLightMode ? 'bg-[#F3F6F1] border-[#E8F0E9] text-[#1A2A1A]' : 'bg-white/[0.04] border-white/[0.07] text-[#E8F0E5]'}`}
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div className={`w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 ${isLightMode ? 'bg-[#D8EDDF]' : 'bg-[#5E9E7A]/20'}`}>
+          <img src={isLightMode ? logoGreen : logo} alt="GreenSort" className="w-full h-full object-cover"/>
+        </div>
+        <div className="min-w-0">
+          <p className={`text-[10px] uppercase tracking-widest ${isLightMode ? 'text-[#5E7A67]' : 'text-[#7A8C77]'}`}>GreenSort</p>
+          <p className={`text-sm font-semibold truncate ${isLightMode ? 'text-[#1A2A1A]' : 'text-[#E8F0E5]'}`}>{currentTitle}</p>
+        </div>
+      </header>
+
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation menu"
+          className="md:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      <aside className={`md:hidden fixed inset-y-0 left-0 z-[60] w-[min(18rem,88vw)] h-[100dvh] border-r shadow-2xl flex flex-col transform transition-transform duration-300 ease-out ${panelClass} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`} aria-hidden={!mobileOpen}>
+        <SidebarContent {...sharedProps} onClose={() => setMobileOpen(false)} />
+      </aside>
+
+      <aside className={`hidden md:flex md:flex-col w-56 h-full border-r shrink-0 ${panelClass}`}>
+        <SidebarContent {...sharedProps} />
+      </aside>
+    </>
   );
 }
