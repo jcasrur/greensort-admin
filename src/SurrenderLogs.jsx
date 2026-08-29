@@ -183,21 +183,44 @@ export default function SurrenderLogs() {
 
   // Update status (accounting/admin action)
   const handleStatusUpdate = async (log, newStatus) => {
-    try {
-      const updatePayload = {
+  console.log('Updating:', {
+    id: log.id,
+    newStatus,
+  });
+
+  try {
+    const { data, error } = await supabase
+      .from('surrender_logs')
+      .update({
         encoded_status: newStatus,
-        status: newStatus,
-      };
-      if (newStatus === 'Credited to Fund') {
-        updatePayload.wishcraft_fund_credited_at = new Date().toISOString();
-      }
-      const { error } = await supabase.from('surrender_logs').update(updatePayload).eq('id', log.id);
-      if (error) throw error;
-      fetchLogs();
-    } catch (e) {
-      alert('Error updating status: ' + e.message);
+      })
+      .eq('id', log.id)
+      .select('id, encoded_status');
+
+    console.log('UPDATE RESULT:', data);
+    console.log('UPDATE ERROR:', error);
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      throw new Error(
+        'No row was updated. Check the surrender_logs RLS UPDATE policy.'
+      );
     }
-  };
+
+    setLogs(prev =>
+      prev.map(item =>
+        item.id === log.id
+          ? { ...item, encoded_status: newStatus }
+          : item
+      )
+    );
+
+  } catch (e) {
+    console.error('Status update error:', e);
+    alert('Error updating status: ' + e.message);
+  }
+};
 
   const handleExport = () => {
     const cols = ['id', 'created_at', 'resident_name', 'resident_email', 'collector_email', 'waste_type', 'weight_kg', 'points_earned', 'estimated_credit', 'contribution_type', 'classroom_section', 'encoded_status'];
@@ -420,16 +443,18 @@ export default function SurrenderLogs() {
                                 {displayStatus}
                               </span>
                               {/* Quick status update dropdown */}
-                              {displayStatus !== 'Rejected' && displayStatus !== 'Credited to Fund' && (
-                                <select
-                                  value={displayStatus}
-                                  onChange={e => handleStatusUpdate(log, e.target.value)}
-                                  className={`text-[10px] rounded-lg border px-2 py-1 outline-none cursor-pointer ${inputCls} !py-1 !px-2`}
-                                  title="Update status"
-                                >
-                                  {WISHCRAFT_STATUSES.filter(s => s !== 'All').map(s => <option key={s}>{s}</option>)}
-                                </select>
-                              )}
+                              <select
+                                value={WISHCRAFT_STATUSES.includes(displayStatus) ? displayStatus : 'Verified'}
+                                onChange={e => handleStatusUpdate(log, e.target.value)}
+                                className={`text-[10px] rounded-lg border px-2 py-1 outline-none cursor-pointer ${inputCls} !py-1 !px-2`}
+                                title="Update status"
+                              >
+                                {WISHCRAFT_STATUSES.filter(s => s !== 'All').map(s => (
+                                  <option key={s} value={s}>
+                                    {s}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           </td>
 
