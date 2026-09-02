@@ -385,9 +385,8 @@ export default function AcceptInvite() {
 
       if (profileError) throw profileError;
 
-      // Mark invitation as used.
-      // If RLS blocks this update, do not prevent the user
-      // from continuing to Google Authenticator setup.
+      // Mark the invitation as used, but do not block MFA setup
+      // if the invitation UPDATE is rejected by RLS.
       const { error: inviteUpdateError } = await supabase
         .from('admin_invitations')
         .update({ is_used: true })
@@ -395,7 +394,7 @@ export default function AcceptInvite() {
 
       if (inviteUpdateError) {
         console.warn(
-          'Invitation verification succeeded, but marking invite as used failed:',
+          'OTP verification succeeded, but the invitation could not be marked as used:',
           inviteUpdateError
         );
       }
