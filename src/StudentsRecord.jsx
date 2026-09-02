@@ -1,6 +1,6 @@
 // StudentsRecord.jsx
 // Shows students from `students` and merges matching `profiles` account data.
-// Includes import/export, template download, duplicate validation, section/status filters, archive/restore, and import history logs.
+// Includes import/export, template download, duplicate validation, section/status filters, archive/restore, and imported history logs.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from './supabase';
@@ -462,7 +462,7 @@ function ImportLogsModal({ open, onClose, logs, onClear, isLightMode, t }) {
         <div className={`px-6 py-5 border-b ${divider} flex items-start justify-between gap-4`}>
           <div>
             <p className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>Upload Accountability</p>
-            <h3 className={`text-lg font-bold ${t.textMain}`}>Import History Logs</h3>
+            <h3 className={`text-lg font-bold ${t.textMain}`}>Imported History Logs</h3>
           </div>
           <button onClick={onClose} className={`p-2 rounded-xl ${isLightMode ? 'hover:bg-[#F3F6F1] text-[#5E7A67]' : 'hover:bg-white/[0.07] text-[#A8BDA2]'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
@@ -471,7 +471,7 @@ function ImportLogsModal({ open, onClose, logs, onClear, isLightMode, t }) {
 
         <div className="p-6 overflow-y-auto space-y-3" style={{ scrollbarWidth: 'none' }}>
           {logs.length === 0 ? (
-            <div className={`text-center py-10 text-sm italic ${t.textMuted}`}>No import logs yet.</div>
+            <div className={`text-center py-10 text-sm italic ${t.textMuted}`}>No imported logs yet.</div>
           ) : logs.map(log => (
             <div key={log.id} className={`rounded-2xl border p-4 ${isLightMode ? 'bg-[#F9FBF9] border-[#E3E8E1]' : 'bg-white/[0.03] border-white/[0.06]'}`}>
               <div className="flex items-start justify-between gap-3">
@@ -902,7 +902,7 @@ export default function StudentsRecord() {
               <button onClick={() => fileInputRef.current?.click()} className={`px-3 py-2 rounded-xl text-xs font-bold border ${isLightMode ? 'bg-white border-[#DDE3DA] text-[#2D6A4F] hover:bg-[#F0F9F3]' : 'bg-white/[0.03] border-white/[0.07] text-[#52B788] hover:bg-white/[0.06]'}`}>Import CSV/Excel</button>
               <button onClick={downloadImportTemplateCsv} className={`px-3 py-2 rounded-xl text-xs font-bold border ${isLightMode ? 'bg-white border-[#DDE3DA] text-[#3D4E3A] hover:bg-[#F7F9F6]' : 'bg-white/[0.03] border-white/[0.07] text-[#B0C5AA] hover:bg-white/[0.06]'}`}>CSV Template</button>
               <button onClick={exportFilteredCsv} className={`px-3 py-2 rounded-xl text-xs font-bold border ${isLightMode ? 'bg-white border-[#DDE3DA] text-[#3D4E3A] hover:bg-[#F7F9F6]' : 'bg-white/[0.03] border-white/[0.07] text-[#B0C5AA] hover:bg-white/[0.06]'}`}>Export CSV</button>
-              <button onClick={() => setShowImportLogs(true)} className={`px-3 py-2 rounded-xl text-xs font-bold border ${isLightMode ? 'bg-white border-[#DDE3DA] text-[#3D4E3A] hover:bg-[#F7F9F6]' : 'bg-white/[0.03] border-white/[0.07] text-[#B0C5AA] hover:bg-white/[0.06]'}`}>Import Logs</button>
+              <button onClick={() => setShowImportLogs(true)} className={`px-3 py-2 rounded-xl text-xs font-bold border ${isLightMode ? 'bg-white border-[#DDE3DA] text-[#3D4E3A] hover:bg-[#F7F9F6]' : 'bg-white/[0.03] border-white/[0.07] text-[#B0C5AA] hover:bg-white/[0.06]'}`}>Imported Logs</button>
             </div>
             <input ref={fileInputRef} type="file" accept=".csv,.xls,.txt" className="hidden" onChange={e => handleImportFile(e.target.files?.[0])}/>
           </div>

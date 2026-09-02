@@ -87,6 +87,7 @@ export default function AcceptInvite() {
 
   const [isWaitingForOtp, setIsWaitingForOtp] = useState(false);
   const [otpCode, setOtpCode] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const loadInvite = async () => {
     const cleanToken = String(queryToken || '').trim();
@@ -139,11 +140,13 @@ export default function AcceptInvite() {
   }, []);
 
 
-  const sendExistingAccountOtp = async () => {
-    if (!invite) return;
+  const sendExistingAccountOtp = async ({ silent = false } = {}) => {
+    if (!invite) return false;
 
-    setError('');
-    setSuccess('');
+    if (!silent) {
+      setError('');
+      setSuccess('');
+    }
     setSubmitting(true);
 
     try {
@@ -162,14 +165,69 @@ export default function AcceptInvite() {
       setOtpType('email');
       setOtpCode('');
       setIsWaitingForOtp(true);
+      setResendCooldown(60);
       setSuccess('Verification code sent to your existing account email.');
+      return true;
     } catch (err) {
       console.error('Existing account OTP error:', err);
       setError(err.message || 'Failed to send verification code.');
+      return false;
     } finally {
       setSubmitting(false);
     }
   };
+
+  const resendVerificationCode = async () => {
+    if (!invite || submitting || resendCooldown > 0) return;
+
+    setError('');
+    setSuccess('');
+    setSubmitting(true);
+
+    try {
+      const cleanEmail = normalizeEmail(invite.email);
+
+      if (otpType === 'signup') {
+        const { error: resendError } = await supabase.auth.resend({
+          type: 'signup',
+          email: cleanEmail,
+        });
+
+        if (resendError) throw resendError;
+
+        setSuccess('A new verification code has been sent to your email.');
+      } else {
+        const { error: otpError } = await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            shouldCreateUser: false,
+          },
+        });
+
+        if (otpError) throw otpError;
+
+        setSuccess('A new verification code has been sent to your email.');
+      }
+
+      setOtpCode('');
+      setResendCooldown(60);
+    } catch (err) {
+      console.error('Resend verification code error:', err);
+      setError(err.message || 'Failed to resend verification code. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+
+    const timer = setInterval(() => {
+      setResendCooldown(current => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   useEffect(() => {
     if (
@@ -180,7 +238,9 @@ export default function AcceptInvite() {
       !existingOtpSentRef.current
     ) {
       existingOtpSentRef.current = true;
-      sendExistingAccountOtp();
+      sendExistingAccountOtp({ silent: true }).then(sent => {
+        if (!sent) existingOtpSentRef.current = false;
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checking, invite, accountMode, isWaitingForOtp]);
@@ -755,6 +815,30 @@ export default function AcceptInvite() {
                 >
                   {submitting ? 'Verifying...' : 'Verify & Continue'}
                 </button>
+
+                <div style={{ textAlign: 'center', marginTop: 16 }}>
+                  <button
+                    type="button"
+                    onClick={resendVerificationCode}
+                    disabled={submitting || resendCooldown > 0}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: '4px 8px',
+                      color: resendCooldown > 0 ? 'rgba(162,218,189,.25)' : 'rgba(52,211,153,.72)',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: submitting || resendCooldown > 0 ? 'not-allowed' : 'pointer',
+                      fontFamily: "'DM Sans', sans-serif",
+                    }}
+                  >
+                    {submitting
+                      ? 'Sending code...'
+                      : resendCooldown > 0
+                        ? `Resend code in ${resendCooldown}s`
+                        : 'Didn’t receive the code? Resend Code'}
+                  </button>
+                </div>
               </form>
             )}
 

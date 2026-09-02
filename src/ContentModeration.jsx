@@ -21,6 +21,7 @@ export default function ContentModeration() {
 
   const [loading, setLoading] = useState(true);
   const [selectedReportDetails, setSelectedReportDetails] = useState(null);
+  const [selectedPost, setSelectedPost] = useState(null);
   const [viewImage, setViewImage] = useState(null);
 
   const txtMain = isLightMode ? 'text-[#1A2A1A]' : 'text-[#E8F0E5]';
@@ -697,20 +698,28 @@ export default function ContentModeration() {
 
   // Keep the AI-flagged post hidden, but mark it as reviewed
   // (clears it from this section by setting status to 'hidden').
-  const handleKeepAiFlaggedHidden = async (post) => {
-    if (!post?.id) return;
+  // Decline the AI report and keep the post active/public.
+const handleDeclineAiFlag = async (post) => {
+  if (!post?.id) return;
 
-    if (!window.confirm(`Keep "${post.title || 'this post'}" hidden? It stays off the public feed.`)) {
-      return;
-    }
+  if (
+    !window.confirm(
+      `Decline the AI report for "${post.title || 'this post'}"? The post will remain visible.`
+    )
+  ) {
+    return;
+  }
 
-    try {
-      // Log the AI action into post_reports for Report History Logs.
-      // Embed post info in reason so history still works even if FK cascades.
-      const aiReasonText = post.ai_reason || 'Violated community guidelines.';
-      const embedded = `[AI Auto-Flag — Kept Hidden by admin] [POST_TITLE:${post.title || 'Untitled'}] [POST_AUTHOR:${post.user || 'Unknown'}] ${aiReasonText}`;
+  try {
+    const aiReasonText =
+      post.ai_reason || 'No AI reason recorded.';
 
-      const { error: insertError } = await supabase.from('post_reports').insert([
+    // Log the AI review into Report History.
+    const embedded = `[AI Auto-Flag — Declined by admin, Post Kept] [POST_TITLE:${post.title || 'Untitled'}] [POST_AUTHOR:${post.user || 'Unknown'}] ${aiReasonText}`;
+
+    const { error: insertError } = await supabase
+      .from('post_reports')
+      .insert([
         {
           post_id: post.id,
           reporter_email: 'GreenSort AI',
@@ -719,38 +728,42 @@ export default function ContentModeration() {
         },
       ]);
 
-      if (insertError) {
-        console.warn('AI log insert failed:', insertError.message);
-      }
-
-      const { error } = await supabase
-        .from('posts')
-        .update({ status: 'hidden' })
-        .eq('id', post.id);
-
-      if (error) throw error;
-
-      await sendNotification({
-        owner_name: post.user,
-        actor_avatar: 'https://ui-avatars.com/api/?name=Admin&background=A0442A&color=fff',
-        action: `kept your AI-flagged post hidden after admin review. Reason: ${aiReasonText} You may appeal this decision.`,
-        post_title: post.title || 'Your post',
-      });
-
-      // Check auto-ban (this counts toward the 3-strike threshold).
-      const banned = await checkAndAutoBan(post.user);
-
-      alert(
-        banned
-          ? `Post kept hidden and ${post.user} was auto-banned.`
-          : 'Post kept hidden.'
-      );
-      fetchAiFlagged();
-    } catch (e) {
-      console.error('handleKeepAiFlaggedHidden error:', e);
-      alert('Error: ' + e.message);
+    if (insertError) {
+      console.warn('AI decline log insert failed:', insertError.message);
     }
-  };
+
+    // Decline the AI flag:
+    // - Post becomes active again
+    // - ai_reason is cleared
+    // - Post will appear in the public feed
+    const { error: postError } = await supabase
+      .from('posts')
+      .update({
+        status: 'active',
+        ai_reason: null,
+      })
+      .eq('id', post.id);
+
+    if (postError) throw postError;
+
+    // Notify the post owner.
+    await sendNotification({
+      owner_name: post.user,
+      actor_avatar:
+        'https://ui-avatars.com/api/?name=Admin&background=2D6A4F&color=fff',
+      action: `declined the AI report against your post after review. Your post remains active and visible. The AI flag was determined not to be a violation.`,
+      post_title: post.title || 'Your post',
+    });
+
+    alert('AI report declined. The post remains active.');
+
+    fetchAiFlagged();
+    fetchPosts();
+  } catch (e) {
+    console.error('handleDeclineAiFlag error:', e);
+    alert('Error: ' + e.message);
+  }
+};
 
   const handleApproveReport = async (
     reportId,
@@ -1398,95 +1411,165 @@ export default function ContentModeration() {
             </div>
           ) : (
             <>
-              {activeTab === 'all_posts' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {posts.length === 0 ? (
-                    <div className={`col-span-full p-10 text-center rounded-2xl border ${
-                      isLightMode ? 'bg-white border-[#E3E8E1] text-[#7A8C77]' : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'
-                    } text-sm italic`}>
-                      No posts found.
-                    </div>
-                  ) : (
-                    posts.map((post) => (
-                      <div key={post.id} className={`${cardBase} flex flex-col hover:shadow-md transition-shadow`}>
-                        <div className={`p-4 flex items-center justify-between ${
-                          isLightMode ? 'border-b border-[#EDF0EB]' : 'border-b border-white/[0.04]'
-                        }`}>
-                          <div className="flex items-center gap-3">
-                            {post.display_avatar ? (
-                              <img src={post.display_avatar} alt="avatar" className="w-9 h-9 rounded-full object-cover border border-[#E3E8E1]" />
-                            ) : (
-                              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}>
-                                {post.display_initials}
-                              </div>
-                            )}
-
-                            <div>
-                              <p className={`text-sm font-semibold ${txtMain} max-w-[160px] truncate`}>
-                                {post.display_name}
-                              </p>
-                              <p className={`text-[11px] ${txtMuted}`}>
-                                {timeAgo(post.created_at)}
-                              </p>
+            {activeTab === 'all_posts' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {posts.length === 0 ? (
+                  <div
+                    className={`col-span-full p-10 text-center rounded-2xl border ${
+                      isLightMode
+                        ? 'bg-white border-[#E3E8E1] text-[#7A8C77]'
+                        : 'bg-[#161D19] border-white/[0.05] text-[#627A5C]'
+                    } text-sm italic`}
+                  >
+                    No posts found.
+                  </div>
+                ) : (
+                  posts.map((post) => (
+                    <div
+                      key={post.id}
+                      className={`${cardBase} flex flex-col hover:shadow-md transition-shadow`}
+                    >
+                      {/* POST HEADER */}
+                      <div
+                        className={`p-4 flex items-center justify-between ${
+                          isLightMode
+                            ? 'border-b border-[#EDF0EB]'
+                            : 'border-b border-white/[0.04]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {post.display_avatar ? (
+                            <img
+                              src={post.display_avatar}
+                              alt="avatar"
+                              className="w-9 h-9 rounded-full object-cover border border-[#E3E8E1]"
+                            />
+                          ) : (
+                            <div
+                              className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${t.iconBg1}`}
+                            >
+                              {post.display_initials}
                             </div>
-                          </div>
+                          )}
 
-                          {post.type && (
-                            <span className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase ${
-                              isLightMode ? 'bg-[#DDE9F5] text-[#2A5FA8]' : 'bg-[#4A9ECC]/10 text-[#4A9ECC]'
-                            }`}>
-                              {post.type}
+                          <div className="min-w-0">
+                            <p
+                              className={`text-sm font-semibold ${txtMain} max-w-[160px] truncate`}
+                            >
+                              {post.display_name}
+                            </p>
+
+                            <p className={`text-[11px] ${txtMuted}`}>
+                              {timeAgo(post.created_at)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {post.type && (
+                          <span
+                            className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase ${
+                              isLightMode
+                                ? 'bg-[#DDE9F5] text-[#2A5FA8]'
+                                : 'bg-[#4A9ECC]/10 text-[#4A9ECC]'
+                            }`}
+                          >
+                            {post.type}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* POST CONTENT */}
+                      <div className="p-4 flex-1">
+                        {post.title && (
+                          <h3
+                            className={`font-semibold ${txtMain} text-sm mb-1.5 leading-snug`}
+                          >
+                            {post.title}
+                          </h3>
+                        )}
+
+                        {/* Limited to 3 lines */}
+                        <p
+                          className={`text-sm ${txtMuted} leading-relaxed line-clamp-3`}
+                        >
+                          {post.display_text}
+                        </p>
+
+                        {/* VIEW FULL POST */}
+                        <button
+                          onClick={() => setSelectedPost(post)}
+                          className={`mt-3 text-xs font-semibold transition-all duration-200 ${
+                            isLightMode
+                              ? 'text-[#2D6A4F] hover:text-[#1F4D38]'
+                              : 'text-[#52B788] hover:text-[#7DD3A8]'
+                          }`}
+                        >
+                          View Post →
+                        </button>
+                      </div>
+
+                      {/* POST IMAGE */}
+                      {post.display_image && (
+                        <div
+                          className={`w-full h-52 flex items-center justify-center overflow-hidden border-t border-b ${
+                            isLightMode
+                              ? 'bg-[#F7F9F6] border-[#EDF0EB]'
+                              : 'bg-[#0F1512] border-white/[0.04]'
+                          }`}
+                        >
+                          <img
+                            src={post.display_image}
+                            alt="Post"
+                            className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-90 transition-opacity"
+                            onClick={() => setViewImage(post.display_image)}
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* POST FOOTER */}
+                      <div
+                        className={`p-3 flex items-center justify-between ${
+                          isLightMode
+                            ? 'bg-[#F7F9F6]'
+                            : 'bg-white/[0.015]'
+                        }`}
+                      >
+                        {/* LOCATION + PRICE */}
+                        <div
+                          className={`flex items-center gap-3 text-[11px] ${txtMuted}`}
+                        >
+                          {post.location && (
+                            <span className="truncate max-w-[150px]">
+                              {post.location}
+                            </span>
+                          )}
+
+                          {post.price && post.price !== '0' && (
+                            <span
+                              className={`text-lg font-semibold ${t.accentText}`}
+                            >
+                              {post.price}
                             </span>
                           )}
                         </div>
 
-                        <div className="p-4 flex-1">
-                          {post.title && (
-                            <h3 className={`font-semibold ${txtMain} text-sm mb-1.5 leading-snug`}>
-                              {post.title}
-                            </h3>
-                          )}
-                          <p className={`text-sm ${txtMuted} leading-relaxed line-clamp-3`}>
-                            {post.display_text}
-                          </p>
-                        </div>
-
-                        {post.display_image && (
-                          <div className={`w-full h-52 flex items-center justify-center overflow-hidden border-t border-b ${
-                            isLightMode ? 'bg-[#F7F9F6] border-[#EDF0EB]' : 'bg-[#0F1512] border-white/[0.04]'
-                          }`}>
-                            <img
-                              src={post.display_image}
-                              alt="Post"
-                              className="max-w-full max-h-full object-contain cursor-zoom-in hover:opacity-90 transition-opacity"
-                              onClick={() => setViewImage(post.display_image)}
-                              onError={(e) => {
-                                e.target.style.display = 'none';
-                              }}
-                            />
-                          </div>
-                        )}
-
-                        <div className={`p-3 flex items-center justify-between ${isLightMode ? 'bg-[#F7F9F6]' : 'bg-white/[0.015]'}`}>
-                          <div className={`flex gap-3 text-[11px] ${txtMuted}`}>
-                            {post.location && <span>{post.location}</span>}
-                            {post.price && post.price !== '0' && (
-                              <span className={`font-semibold ${t.accentText}`}>{post.price}</span>
-                            )}
-                          </div>
-
-                          <button
-                            onClick={() => handleDeletePost(post.id)}
-                            className={`p-1.5 rounded-lg transition-all ${txtMuted} hover:text-red-500 hover:bg-red-500/10`}
-                          >
-                            Delete
-                          </button>
-                        </div>
+                        {/* DELETE */}
+                        <button
+                          onClick={() => handleDeletePost(post.id)}
+                          className="ml-auto px-4 py-2 rounded-lg text-xs font-medium text-red-500 border border-red-500/40 bg-red-500/5 hover:bg-red-500/15 hover:border-red-500/70 hover:text-red-400 transition-all duration-200"
+                        >
+                          Delete
+                        </button>
                       </div>
-                    ))
-                  )}
-                </div>
-              )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
 
               {activeTab === 'reports' && (
                 <>
@@ -1632,7 +1715,7 @@ export default function ContentModeration() {
                               }
                               className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all bg-red-500 hover:bg-red-400"
                             >
-                              Approve Report & Delete Post
+                              Delete Post
                             </button>
 
                             <button
@@ -1650,7 +1733,7 @@ export default function ContentModeration() {
                                 isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'
                               }`}
                             >
-                              Decline Report & Keep Post
+                              Keep Post
                             </button>
                           </div>
                         </div>
@@ -1765,13 +1848,13 @@ export default function ContentModeration() {
                                   Delete Post
                                 </button>
 
-                                <button
-                                  onClick={() => handleKeepAiFlaggedHidden(post)}
+                               <button
+                                  onClick={() => handleDeclineAiFlag(post)}
                                   className={`w-full py-2.5 rounded-xl text-xs font-medium transition-all ${txtMuted} ${
                                     isLightMode ? 'bg-[#F4F6F2] hover:bg-[#EDF0EB]' : 'bg-white/[0.04] hover:bg-white/[0.07]'
                                   }`}
                                 >
-                                  Keep Hidden
+                                  Keep Post
                                 </button>
                               </div>
                             </div>
@@ -2111,6 +2194,85 @@ export default function ContentModeration() {
               <button
                 onClick={() => setSelectedReportDetails(null)}
                 className={`w-full mt-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                  isLightMode
+                    ? 'bg-[#F0F4EE] text-[#3D4E3A] hover:bg-[#E3E8E1]'
+                    : 'bg-white/[0.06] text-[#B0C5AA] hover:bg-white/[0.1]'
+                }`}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedPost && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setSelectedPost(null)}
+        >
+          <div
+            className={`w-full max-w-md max-h-[88vh] overflow-y-auto rounded-2xl border shadow-2xl ${
+              isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#161D19] border-white/[0.07]'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`p-5 border-b flex items-center justify-between ${
+              isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'
+            }`}>
+              <div className="min-w-0">
+                <h3 className={`text-lg font-semibold ${txtMain} truncate`}>
+                  {selectedPost.title || 'Post Details'}
+                </h3>
+                <p className={`text-xs ${txtMuted} mt-1`}>
+                  Posted by {selectedPost.display_name}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedPost(null)}
+                className={`p-2 rounded-lg ${txtMuted} transition-colors ${
+                  isLightMode ? 'hover:bg-[#F0F4EE] hover:text-[#1A2A1A]' : 'hover:bg-white/[0.06] hover:text-[#E8F0E5]'
+                }`}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4">
+              {selectedPost.display_image && (
+                <div className={`mb-5 flex items-center justify-center rounded-xl overflow-hidden border ${isLightMode ? 'border-[#EDF0EB] bg-[#F7F9F6]' : 'border-white/[0.05] bg-[#0F1512]'}`}>
+                  <img
+                    src={selectedPost.display_image}
+                    alt="Post"
+                    className="w-auto h-auto max-w-full max-h-[55vh] object-contain rounded-xl"
+                  />
+                </div>
+              )}
+
+              <p className={`text-sm ${txtSub} leading-7 whitespace-pre-wrap break-words`}>
+                {selectedPost.display_text}
+              </p>
+
+              <div className="flex items-center gap-4 mt-5">
+                {selectedPost.location && (
+                  <span className={`text-xs ${txtMuted}`}>
+                    📍 {selectedPost.location}
+                  </span>
+                )}
+                {selectedPost.price && selectedPost.price !== '0' && (
+                  <span className={`text-lg font-semibold ${t.accentText}`}>
+                    {selectedPost.price}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className={`p-4 border-t ${
+              isLightMode ? 'border-[#EDF0EB]' : 'border-white/[0.05]'
+            }`}>
+              <button
+                onClick={() => setSelectedPost(null)}
+                className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all ${
                   isLightMode
                     ? 'bg-[#F0F4EE] text-[#3D4E3A] hover:bg-[#E3E8E1]'
                     : 'bg-white/[0.06] text-[#B0C5AA] hover:bg-white/[0.1]'
