@@ -385,18 +385,28 @@ export default function AcceptInvite() {
 
       if (profileError) throw profileError;
 
+      // Mark invitation as used.
+      // If RLS blocks this update, do not prevent the user
+      // from continuing to Google Authenticator setup.
       const { error: inviteUpdateError } = await supabase
         .from('admin_invitations')
         .update({ is_used: true })
         .eq('id', invite.id);
 
-      if (inviteUpdateError) throw inviteUpdateError;
+      if (inviteUpdateError) {
+        console.warn(
+          'Invitation verification succeeded, but marking invite as used failed:',
+          inviteUpdateError
+        );
+      }
 
-      setSuccess('Account verified successfully. Redirecting to Google Authenticator setup...');
+      setSuccess(
+        'Account verified successfully. Redirecting to Google Authenticator setup...'
+      );
 
       setTimeout(() => {
         navigate('/setup-mfa?from=invite');
-      }, 900);
+      }, 500);
     } catch (err) {
       console.error('OTP verify error:', err);
       setError(err.message || 'Invalid verification code. Please try again.');
