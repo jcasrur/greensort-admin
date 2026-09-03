@@ -385,18 +385,22 @@ export default function AcceptInvite() {
 
       if (profileError) throw profileError;
 
-      // Mark the invitation as used, but do not block MFA setup
-      // if the invitation UPDATE is rejected by RLS.
-      const { error: inviteUpdateError } = await supabase
-        .from('admin_invitations')
-        .update({ is_used: true })
-        .eq('id', invite.id);
+      // Complete the invitation through a restricted SECURITY DEFINER
+      // function. It verifies that the authenticated email owns this invite,
+      // then updates is_used without being blocked by table RLS.
+      const { data: invitationCompleted, error: inviteUpdateError } = await supabase
+        .rpc('complete_admin_invitation', {
+          p_invitation_id: invite.id,
+        });
 
       if (inviteUpdateError) {
-        console.warn(
-          'OTP verification succeeded, but the invitation could not be marked as used:',
-          inviteUpdateError
+        throw new Error(
+          `Your account was verified, but the invitation could not be completed: ${inviteUpdateError.message}`
         );
+      }
+
+      if (!invitationCompleted) {
+        throw new Error('Your account was verified, but the invitation was not marked as used.');
       }
 
       setSuccess(
