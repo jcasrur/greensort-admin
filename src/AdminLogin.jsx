@@ -206,6 +206,7 @@ const AdminLogin = () => {
   const [setupMessage, setSetupMessage] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMessage, setForgotMessage] = useState('');
+  const [checkingSession, setCheckingSession] = useState(true);
 
   // Step 2
   const [step,        setStep]        = useState(1);
@@ -226,47 +227,58 @@ const AdminLogin = () => {
 
   useEffect(() => {
     let isMounted = true;
+    let isRedirecting = false;
 
     const continueExistingSession = async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const session = sessionData?.session;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData?.session;
 
-      if (!session || !isMounted) return;
+        if (!session || !isMounted) return;
 
-      const { data: adminRow, error: adminError } = await supabase
-        .from('admin_users')
-        .select('role, is_active, full_name')
-        .ilike('email', session.user.email)
-        .eq('is_active', true)
-        .maybeSingle();
+        const { data: adminRow, error: adminError } = await supabase
+          .from('admin_users')
+          .select('role, is_active, full_name')
+          .ilike('email', session.user.email)
+          .eq('is_active', true)
+          .maybeSingle();
 
-      if (adminError || !adminRow || !isMounted) {
-        if (!adminError && !adminRow) await supabase.auth.signOut();
-        return;
-      }
+        if (adminError || !adminRow || !isMounted) {
+          if (!adminError && !adminRow) await supabase.auth.signOut();
+          return;
+        }
 
-      const { data: assurance, error: assuranceError } =
-        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        const { data: assurance, error: assuranceError } =
+          await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
 
-      if (assuranceError || !isMounted) return;
+        if (assuranceError || !isMounted) return;
 
-      const needsMfa =
-        assurance?.nextLevel === 'aal2' && assurance?.currentLevel !== 'aal2';
+        const needsMfa =
+          assurance?.nextLevel === 'aal2' && assurance?.currentLevel !== 'aal2';
 
-      if (!needsMfa) {
-        navigate('/dashboard', { replace: true });
-        return;
-      }
+        if (!needsMfa) {
+          isRedirecting = true;
+          navigate('/dashboard', { replace: true });
+          return;
+        }
 
-      setAdminName(adminRow.full_name || session.user.email.split('@')[0]);
+        setAdminName(adminRow.full_name || session.user.email.split('@')[0]);
 
-      const { data: factors } = await supabase.auth.mfa.listFactors();
-      const hasTotp = factors?.totp?.some(factor => factor.status === 'verified');
+        const { data: factors } = await supabase.auth.mfa.listFactors();
+        const hasTotp = factors?.totp?.some(factor => factor.status === 'verified');
 
-      if (hasTotp) {
-        setStep(2);
-      } else {
-        navigate('/setup-mfa', { replace: true });
+        if (hasTotp) {
+          setStep(2);
+        } else {
+          isRedirecting = true;
+          navigate('/setup-mfa', { replace: true });
+        }
+      } catch (error) {
+        console.error('Session restore error:', error);
+      } finally {
+        if (isMounted && !isRedirecting) {
+          setCheckingSession(false);
+        }
       }
     };
 
@@ -428,6 +440,48 @@ const AdminLogin = () => {
     document.getElementById(`gs-otp-${Math.min(pasted.length, 5)}`)?.focus();
     if (pasted.length === 6) setTimeout(() => verifyTotp(pasted), 80);
   };
+
+  if (checkingSession) {
+    return (
+      <>
+        <style>{STYLES}</style>
+        <div style={{
+          minHeight:'100vh',
+          display:'flex',
+          flexDirection:'column',
+          alignItems:'center',
+          justifyContent:'center',
+          gap:18,
+          background:'#080F0C',
+          fontFamily:"'DM Sans', sans-serif",
+        }}>
+          <img
+            src={logo}
+            alt="GreenSort"
+            className="gs-logo-glow"
+            style={{ width:72, height:72, objectFit:'contain' }}
+          />
+          <div style={{
+            width:30,
+            height:30,
+            border:'3px solid rgba(52,211,153,.15)',
+            borderTopColor:'#34d399',
+            borderRadius:'50%',
+            animation:'spin .7s linear infinite',
+          }} />
+          <p style={{
+            margin:0,
+            color:'rgba(162,218,189,.55)',
+            fontSize:12,
+            letterSpacing:'.08em',
+            textTransform:'uppercase',
+          }}>
+            Checking your session…
+          </p>
+        </div>
+      </>
+    );
+  }
 
   /* ═══════════════════════ RENDER ═══════════════════════ */
   return (
