@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from './supabase';
+import {
+  getRememberMePreference,
+  setRememberMePreference,
+  supabase,
+} from './supabase';
 import logo from './assets/logo.png'; // 1. IMPORTED LOGO HERE
 
 /* ─── CSS injected once ────────────────────────────────────────────────────── */
@@ -194,6 +198,7 @@ const AdminLogin = () => {
   // Step 1
   const [email,        setEmail]        = useState('');
   const [password,     setPassword]     = useState('');
+  const [rememberMe,   setRememberMe]   = useState(() => getRememberMePreference());
   const [showPassword, setShowPassword] = useState(false);
   const [capsLockOn,   setCapsLockOn]   = useState(false);
   const [step1Loading, setStep1Loading] = useState(false);
@@ -218,6 +223,59 @@ const AdminLogin = () => {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const continueExistingSession = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session;
+
+      if (!session || !isMounted) return;
+
+      const { data: adminRow, error: adminError } = await supabase
+        .from('admin_users')
+        .select('role, is_active, full_name')
+        .ilike('email', session.user.email)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (adminError || !adminRow || !isMounted) {
+        if (!adminError && !adminRow) await supabase.auth.signOut();
+        return;
+      }
+
+      const { data: assurance, error: assuranceError } =
+        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+      if (assuranceError || !isMounted) return;
+
+      const needsMfa =
+        assurance?.nextLevel === 'aal2' && assurance?.currentLevel !== 'aal2';
+
+      if (!needsMfa) {
+        navigate('/dashboard', { replace: true });
+        return;
+      }
+
+      setAdminName(adminRow.full_name || session.user.email.split('@')[0]);
+
+      const { data: factors } = await supabase.auth.mfa.listFactors();
+      const hasTotp = factors?.totp?.some(factor => factor.status === 'verified');
+
+      if (hasTotp) {
+        setStep(2);
+      } else {
+        navigate('/setup-mfa', { replace: true });
+      }
+    };
+
+    continueExistingSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
 
   const handleKeyUp = e => setCapsLockOn(e.getModifierState('CapsLock'));
 
@@ -273,6 +331,8 @@ const AdminLogin = () => {
     if (!email || !password) { setStep1Error('Please enter both email and password.'); return; }
     setStep1Loading(true);
     try {
+      setRememberMePreference(rememberMe);
+
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(), password,
       });
@@ -559,8 +619,15 @@ const AdminLogin = () => {
                   <div className="gs-animate gs-delay-3" style={{ display:'flex',alignItems:'center',
                     justifyContent:'space-between',marginBottom:24 }}>
                     <label style={{ display:'flex',alignItems:'center',gap:8,cursor:'pointer' }}>
-                      <input type="checkbox" className="gs-checkbox" />
-                      <span style={{ fontSize:13,color:'rgba(162,218,189,.4)',fontWeight:400 }}>Remember me</span>
+                      <input
+                        type="checkbox"
+                        className="gs-checkbox"
+                        checked={rememberMe}
+                        onChange={event => setRememberMe(event.target.checked)}
+                      />
+                      <span style={{ fontSize:13,color:'rgba(162,218,189,.4)',fontWeight:400 }}>
+                        Remember me
+                      </span>
                     </label>
                     <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
                       <button
