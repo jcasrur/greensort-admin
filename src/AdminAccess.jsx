@@ -447,16 +447,8 @@ export default function AdminAccess() {
         },
       });
 
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('id, email, role')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
-
-      const inviteMode = existingProfile ? 'existing' : 'new';
-
       const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
-      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}&mode=${inviteMode}`;
+      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}`;
 
       const { data: authData } = await supabase.auth.getSession();
       const token = authData.session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -741,16 +733,8 @@ export default function AdminAccess() {
       const cleanEmail = String(inv.email || '').toLowerCase().trim();
       const selectedRole = inv.role || 'admin';
 
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('id, email, role')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
-
-      const inviteMode = existingProfile ? 'existing' : 'new';
-
       const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
-      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}&mode=${inviteMode}`;
+      const inviteLink = `${APP_URL}/accept-invite?token=${encodeURIComponent(inv.token)}`;
 
       const { data: adminRow } = await supabase
         .from('admin_users')
@@ -800,7 +784,7 @@ export default function AdminAccess() {
           token_id: inv.id,
           role: selectedRole,
           role_label: roleLabel(selectedRole),
-          invite_mode: inviteMode,
+          invite_mode: 'auto-detected',
         },
       });
 

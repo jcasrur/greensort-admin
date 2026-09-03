@@ -68,11 +68,11 @@ export default function AcceptInvite() {
   }, []);
 
   const queryToken = queryParams.get('token') || '';
-  const queryMode = queryParams.get('mode') || 'new';
 
   const [invite, setInvite] = useState(null);
-  const [accountMode, setAccountMode] = useState(queryMode === 'existing' ? 'existing' : 'new');
-  const [otpType, setOtpType] = useState(queryMode === 'existing' ? 'email' : 'signup');
+  const [inviteStatus, setInviteStatus] = useState('checking');
+  const [accountMode, setAccountMode] = useState('new');
+  const [otpType, setOtpType] = useState('signup');
 
   const [checking, setChecking] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -95,9 +95,11 @@ export default function AcceptInvite() {
     setError('');
     setSuccess('');
     setInvite(null);
+    setInviteStatus('checking');
 
     if (!cleanToken) {
       setChecking(false);
+      setInviteStatus('invalid');
       setError('Invalid invitation link. Please use the Accept Admin Invite button from your email.');
       return;
     }
@@ -105,29 +107,50 @@ export default function AcceptInvite() {
     setChecking(true);
 
     try {
-      const { data, error: inviteError } = await supabase
-        .from('admin_invitations')
-        .select('id, email, role, is_used, expires_at')
-        .eq('token', cleanToken)
-        .maybeSingle();
+      const { data: invitationRows, error: inviteError } = await supabase
+        .rpc('get_admin_invitation_by_token', {
+          p_token: cleanToken,
+        });
 
       if (inviteError) throw inviteError;
 
+      const data = Array.isArray(invitationRows)
+        ? invitationRows[0]
+        : invitationRows;
+
       if (!data) {
-        throw new Error('Invitation not found. Please ask the Super Admin for a new invite.');
+        setInviteStatus('invalid');
+        setError('Invitation not found. Please ask the Super Admin for a new invite.');
+        return;
       }
 
       if (data.is_used) {
-        throw new Error('This invitation has already been used. Please sign in instead.');
+        setInviteStatus('used');
+
+        if (data.account_exists) {
+          setSuccess('Your admin account is already active. Please sign in to continue.');
+        } else {
+          setError('This invitation is already closed. Please ask the Super Admin for a new invite.');
+        }
+
+        return;
       }
 
       if (new Date(data.expires_at).getTime() < Date.now()) {
-        throw new Error('This invitation has expired. Ask the Super Admin to send a new invite.');
+        setInviteStatus('expired');
+        setError('This invitation has expired. Ask the Super Admin to send a new invite.');
+        return;
       }
 
+      const resolvedMode = data.account_exists ? 'existing' : 'new';
+
+      setAccountMode(resolvedMode);
+      setOtpType(resolvedMode === 'existing' ? 'email' : 'signup');
+      setInviteStatus('valid');
       setInvite(data);
     } catch (err) {
       console.error('Invite validation error:', err);
+      setInviteStatus('invalid');
       setError(err.message || 'Failed to open invitation.');
     } finally {
       setChecking(false);
@@ -420,6 +443,30 @@ export default function AcceptInvite() {
 
   const isExistingMode = accountMode === 'existing';
 
+  const pageTitle = inviteStatus === 'used'
+    ? 'Account already activated'
+    : inviteStatus === 'expired'
+      ? 'Invitation expired'
+      : inviteStatus === 'invalid'
+        ? 'Invitation unavailable'
+        : isWaitingForOtp
+          ? 'Check your email'
+          : isExistingMode
+            ? 'Verify existing account'
+            : 'Create your password';
+
+  const pageSubtitle = inviteStatus === 'used'
+    ? 'This invitation was already completed. Sign in with your admin account to continue.'
+    : inviteStatus === 'expired'
+      ? 'This invitation can no longer be used.'
+      : inviteStatus === 'invalid'
+        ? 'We could not verify this invitation link.'
+        : isWaitingForOtp
+          ? 'Enter the verification code sent to your email.'
+          : isExistingMode
+            ? 'This email already has an account. We will verify it before admin access setup.'
+            : 'Set up your admin account before Google Authenticator verification.';
+
   return (
     <>
       <style>{STYLES}</style>
@@ -497,11 +544,7 @@ export default function AcceptInvite() {
                 margin: '8px 0 6px',
               }}
             >
-              {isWaitingForOtp
-                ? 'Check your email'
-                : isExistingMode
-                  ? 'Verify existing account'
-                  : 'Create your password'}
+              {pageTitle}
             </h1>
 
             <p
@@ -512,11 +555,7 @@ export default function AcceptInvite() {
                 lineHeight: 1.6,
               }}
             >
-              {isWaitingForOtp
-                ? 'Enter the verification code sent to your email.'
-                : isExistingMode
-                  ? 'This email already has an account. We will verify it before admin access setup.'
-                  : 'Set up your admin account before Google Authenticator verification.'}
+              {pageSubtitle}
             </p>
           </div>
 
@@ -873,7 +912,7 @@ export default function AcceptInvite() {
                   fontFamily: "'DM Sans', sans-serif",
                 }}
               >
-                Back to Login
+                {inviteStatus === 'used' ? 'Go to Login' : 'Back to Login'}
               </button>
             )}
 
