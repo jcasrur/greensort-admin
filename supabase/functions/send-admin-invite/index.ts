@@ -1,496 +1,316 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import nodemailer from "npm:nodemailer";
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import nodemailer from 'npm:nodemailer@6.9.16';
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const json = (body: Record<string, unknown>, status = 200) =>
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: 'Super Admin',
+  admin: 'Admin',
+  coordinator: 'Mobile Coordinator',
+  accounting: 'Accounting',
+  receiving_staff: 'Receiving Staff',
+  moderator: 'Moderator',
+};
+
+const ALLOWED_TARGET_ROLES = new Set(Object.keys(ROLE_LABELS));
+
+const jsonResponse = (body: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: {
       ...corsHeaders,
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
   });
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: corsHeaders,
-    });
+const normalizeEmail = (value: unknown) => String(value || '').trim().toLowerCase();
+
+const escapeHtml = (value: unknown) =>
+  String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+Deno.serve(async (request: Request) => {
+  if (request.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
   }
 
-  if (req.method !== "POST") {
-    return json(
-      {
-        success: false,
-        error: "Method not allowed.",
-      },
-      405
+  if (request.method !== 'POST') {
+    return jsonResponse({ success: false, error: 'Method not allowed.' }, 405);
+  }
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const gmailUser = Deno.env.get('GMAIL_USER');
+  const gmailAppPassword = Deno.env.get('GMAIL_APP_PASSWORD');
+
+  if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
+    console.error('Missing required Supabase environment variables.');
+    return jsonResponse({ success: false, error: 'Server configuration is incomplete.' }, 500);
+  }
+
+  if (!gmailUser || !gmailAppPassword) {
+    console.error('Missing GMAIL_USER or GMAIL_APP_PASSWORD.');
+    return jsonResponse(
+      { success: false, error: 'Email notification is not configured. Password was not changed.' },
+      500
     );
   }
+
+  const authorization = request.headers.get('Authorization') || '';
+  const accessToken = authorization.replace(/^Bearer\s+/i, '').trim();
+
+  if (!accessToken || accessToken === authorization) {
+    return jsonResponse({ success: false, error: 'Missing authentication token.' }, 401);
+  }
+
+  const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!supabaseUrl || !anonKey || !serviceRoleKey) {
-      throw new Error("Missing Supabase environment variables.");
-    }
-
-    const authHeader = req.headers.get("Authorization");
-
-    if (!authHeader?.startsWith("Bearer ")) {
-      return json(
-        {
-          success: false,
-          error: "Missing authorization token.",
-        },
-        401
-      );
-    }
-
-    const accessToken = authHeader.replace("Bearer ", "").trim();
-
-    /*
-     * Client using the logged-in user's access token.
-     */
-    const userClient = createClient(
-      supabaseUrl,
-      anonKey,
-      {
-        global: {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-      }
-    );
-
-    /*
-     * Service-role client.
-     *
-     * IMPORTANT:
-     * This must ONLY exist inside the Edge Function.
-     * Never put SUPABASE_SERVICE_ROLE_KEY in React/Vite code.
-     */
-    const adminClient = createClient(
-      supabaseUrl,
-      serviceRoleKey
-    );
-
-    /*
-     * Verify the currently logged-in user.
-     */
     const {
-      data: { user: authUser },
-      error: authError,
-    } = await userClient.auth.getUser();
+      data: { user: caller },
+      error: callerAuthError,
+    } = await userClient.auth.getUser(accessToken);
 
-    if (authError || !authUser?.email) {
-      return json(
-        {
-          success: false,
-          error: "Invalid or expired session.",
-        },
-        401
-      );
+    if (callerAuthError || !caller?.email) {
+      return jsonResponse({ success: false, error: 'Your session is invalid or expired.' }, 401);
     }
 
-    const callerEmail = authUser.email
-      .toLowerCase()
-      .trim();
+    const callerEmail = normalizeEmail(caller.email);
 
-    /*
-     * Find the caller in admin_users.
-     */
-    const {
-      data: callerAdmin,
-      error: callerAdminError,
-    } = await adminClient
-      .from("admin_users")
-      .select(
-        "id, email, full_name, role, is_active"
-      )
-      .ilike("email", callerEmail)
+    const { data: callerAdmin, error: callerAdminError } = await adminClient
+      .from('admin_users')
+      .select('id, email, role, is_active')
+      .ilike('email', callerEmail)
+      .eq('role', 'super_admin')
+      .eq('is_active', true)
       .maybeSingle();
 
     if (callerAdminError) {
-      throw callerAdminError;
+      console.error('Failed to verify Super Admin access:', callerAdminError.message);
+      return jsonResponse({ success: false, error: 'Unable to verify Super Admin access.' }, 500);
     }
 
-    /*
-     * Caller must be an active Super Admin.
-     */
-    let callerIsSuperAdmin =
-      callerAdmin?.role === "super_admin" &&
-      callerAdmin?.is_active === true;
-
-    /*
-     * Also allow an email that exists in the
-     * super_admin_allowlist.
-     */
-    if (!callerIsSuperAdmin) {
-      const {
-        data: allowlisted,
-        error: allowlistError,
-      } = await adminClient
-        .from("super_admin_allowlist")
-        .select("id, email")
-        .ilike("email", callerEmail)
-        .maybeSingle();
-
-      if (allowlistError) {
-        throw allowlistError;
-      }
-
-      callerIsSuperAdmin = Boolean(
-        allowlisted?.email
-      );
-    }
-
-    if (!callerIsSuperAdmin) {
-      return json(
-        {
-          success: false,
-          error:
-            "Only Super Admin can change admin passwords.",
-        },
+    if (!callerAdmin) {
+      return jsonResponse(
+        { success: false, error: 'Only an active Super Admin can change admin passwords.' },
         403
       );
     }
 
-    /*
-     * Read request body.
-     */
-    let payload: {
-      target_email?: string;
-      new_password?: string;
-    };
+    let requestBody: Record<string, unknown>;
 
     try {
-      payload = await req.json();
+      requestBody = await request.json();
     } catch {
-      return json(
-        {
-          success: false,
-          error: "Invalid JSON request body.",
-        },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Invalid request body.' }, 400);
     }
 
-    const targetEmail = String(
-      payload.target_email || ""
-    )
-      .toLowerCase()
-      .trim();
-
-    const newPassword = String(
-      payload.new_password || ""
-    );
+    const targetEmail = normalizeEmail(requestBody.target_email);
+    const newPassword = typeof requestBody.new_password === 'string'
+      ? requestBody.new_password
+      : '';
 
     if (!targetEmail) {
-      return json(
-        {
-          success: false,
-          error:
-            "Target admin email is required.",
-        },
+      return jsonResponse({ success: false, error: 'Target admin email is required.' }, 400);
+    }
+
+    if (newPassword.length < 8 || newPassword.length > 72) {
+      return jsonResponse(
+        { success: false, error: 'The new password must be between 8 and 72 characters.' },
         400
       );
     }
 
-    /*
-     * Prevent Super Admin from changing
-     * their own password through this function.
-     */
     if (targetEmail === callerEmail) {
-      return json(
-        {
-          success: false,
-          error:
-            "You cannot change your own password from Admin Access.",
-        },
-        400
+      return jsonResponse(
+        { success: false, error: 'You cannot change your own password from Admin Access.' },
+        403
       );
     }
 
-    /*
-     * Password validation.
-     */
-    if (newPassword.length < 8) {
-      return json(
-        {
-          success: false,
-          error:
-            "Password must be at least 8 characters long.",
-        },
-        400
-      );
-    }
-
-    if (newPassword.length > 72) {
-      return json(
-        {
-          success: false,
-          error:
-            "Password must not be longer than 72 characters.",
-        },
-        400
-      );
-    }
-
-    /*
-     * Find the target in admin_users.
-     */
-    const {
-      data: targetAdmin,
-      error: targetAdminError,
-    } = await adminClient
-      .from("admin_users")
-      .select(
-        "id, email, full_name, role, is_active"
-      )
-      .ilike("email", targetEmail)
+    const { data: targetAdmin, error: targetAdminError } = await adminClient
+      .from('admin_users')
+      .select('id, email, full_name, role, is_active')
+      .ilike('email', targetEmail)
       .maybeSingle();
 
     if (targetAdminError) {
-      throw targetAdminError;
+      console.error('Failed to find target admin:', targetAdminError.message);
+      return jsonResponse({ success: false, error: 'Unable to find the target admin account.' }, 500);
     }
 
-    if (!targetAdmin) {
-      return json(
-        {
-          success: false,
-          error:
-            "Target admin account was not found.",
-        },
-        404
-      );
+    if (!targetAdmin || !ALLOWED_TARGET_ROLES.has(targetAdmin.role)) {
+      return jsonResponse({ success: false, error: 'Target admin account was not found.' }, 404);
     }
 
-    /*
-     * IMPORTANT:
-     *
-     * admin_users.id is NOT guaranteed to be
-     * the same as auth.users.id in your schema.
-     *
-     * Therefore we search Auth by email.
-     */
-    let targetAuthUser = null;
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: gmailUser,
+        pass: gmailAppPassword,
+      },
+    });
 
-    let page = 1;
-    const perPage = 1000;
-
-    while (!targetAuthUser) {
-      const {
-        data: usersPage,
-        error: usersError,
-      } =
-        await adminClient.auth.admin.listUsers({
-          page,
-          perPage,
-        });
-
-      if (usersError) {
-        throw usersError;
-      }
-
-      const users =
-        usersPage?.users || [];
-
-      targetAuthUser = users.find(
-        (user) =>
-          user.email
-            ?.toLowerCase()
-            .trim() === targetEmail
-      );
-
-      if (users.length < perPage) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    if (!targetAuthUser) {
-      return json(
-        {
-          success: false,
-          error:
-            "The target admin has no matching Supabase Auth account.",
-        },
-        404
-      );
-    }
-
-    /*
-     * Actually change the password.
-     */
-    const {
-      error: passwordError,
-    } =
-      await adminClient.auth.admin.updateUserById(
-        targetAuthUser.id,
-        {
-          password: newPassword,
-        }
-      );
-
-    if (passwordError) {
-      throw passwordError;
-    }
-
-    /*
-     * Log the password change.
-     *
-     * NEVER put the password into metadata.
-     */
-    const { error: logError } =
-      await adminClient
-        .from("admin_activity_log")
-        .insert({
-          actor_email: callerEmail,
-          action: "changed_admin_password",
-          target_email: targetEmail,
-          metadata: {
-            target_role:
-              targetAdmin.role,
-
-            target_role_label:
-              targetAdmin.role === "super_admin"
-                ? "Super Admin"
-                : targetAdmin.role === "coordinator"
-                  ? "Mobile Coordinator"
-                  : targetAdmin.role === "receiving_staff"
-                    ? "Receiving Staff"
-                    : targetAdmin.role === "accounting"
-                      ? "Accounting"
-                      : targetAdmin.role === "moderator"
-                        ? "Moderator"
-                        : "Admin",
-          },
-        });
-
-    if (logError) {
+    try {
+      await transporter.verify();
+    } catch (emailConfigError) {
       console.error(
-        "Password changed, but activity log failed:",
-        logError
+        'Gmail SMTP verification failed:',
+        emailConfigError instanceof Error ? emailConfigError.message : emailConfigError
+      );
+      return jsonResponse(
+        { success: false, error: 'Email service is unavailable. Password was not changed.' },
+        502
       );
     }
 
-    /*
-     * Send notification email.
-     *
-     * IMPORTANT:
-     * The new password is NEVER included.
-     */
-    const gmailUser =
-      Deno.env.get("GMAIL_USER");
+    const { data: targetProfile, error: targetProfileError } = await adminClient
+      .from('profiles')
+      .select('id')
+      .ilike('email', targetEmail)
+      .maybeSingle();
 
-    const gmailAppPassword =
-      Deno.env.get("GMAIL_APP_PASSWORD");
+    if (targetProfileError) {
+      console.error('Failed to resolve target profile:', targetProfileError.message);
+      return jsonResponse({ success: false, error: 'Unable to resolve the target Auth account.' }, 500);
+    }
 
-    if (
-      gmailUser &&
-      gmailAppPassword
-    ) {
-      try {
-        const transporter =
-          nodemailer.createTransport({
-            service: "gmail",
+    let targetAuthUserId = targetProfile?.id || null;
 
-            auth: {
-              user: gmailUser,
-              pass: gmailAppPassword,
-            },
-          });
-
-        await transporter.sendMail({
-          from: `"GreenSort Admin" <${gmailUser}>`,
-          to: targetEmail,
-
-          subject:
-            "Your GreenSort Admin password was changed",
-
-          html: `
-            <div
-              style="
-                font-family: Arial, sans-serif;
-                line-height: 1.6;
-                color: #1f2937;
-                max-width: 620px;
-                margin: 0 auto;
-              "
-            >
-              <h2>
-                Your GreenSort Admin password was changed
-              </h2>
-
-              <p>
-                Hi ${targetAdmin.full_name || "Admin"},
-              </p>
-
-              <p>
-                Your GreenSort Admin Portal password
-                was changed by a Super Admin.
-              </p>
-
-              <p>
-                <strong>
-                  For your security, the new password
-                  is not included in this email.
-                </strong>
-              </p>
-
-              <p>
-                If you did not expect this change,
-                please contact your GreenSort Super Admin
-                immediately.
-              </p>
-            </div>
-          `,
+    if (!targetAuthUserId) {
+      for (let page = 1; page <= 100 && !targetAuthUserId; page += 1) {
+        const { data: authPage, error: listUsersError } = await adminClient.auth.admin.listUsers({
+          page,
+          perPage: 100,
         });
-      } catch (emailError) {
-        console.error(
-          "Password changed, but notification email failed:",
-          emailError
+
+        if (listUsersError) {
+          console.error('Failed to search Auth users:', listUsersError.message);
+          return jsonResponse({ success: false, error: 'Unable to search Auth accounts.' }, 500);
+        }
+
+        const matchingUser = authPage.users.find(
+          (user) => normalizeEmail(user.email) === targetEmail
         );
+
+        if (matchingUser) {
+          targetAuthUserId = matchingUser.id;
+          break;
+        }
+
+        if (authPage.users.length < 100) break;
       }
-    } else {
-      console.warn(
-        "GMAIL_USER or GMAIL_APP_PASSWORD is missing. " +
-          "Password was changed, but no notification email was sent."
+    }
+
+    if (!targetAuthUserId) {
+      return jsonResponse(
+        { success: false, error: 'The target admin does not have a Supabase Auth account yet.' },
+        404
       );
     }
 
-    return json({
+    const { error: passwordUpdateError } = await adminClient.auth.admin.updateUserById(
+      targetAuthUserId,
+      { password: newPassword }
+    );
+
+    if (passwordUpdateError) {
+      console.error('Password update failed:', passwordUpdateError.message);
+      return jsonResponse({ success: false, error: 'Supabase Auth could not update the password.' }, 500);
+    }
+
+    const targetName = targetAdmin.full_name || ROLE_LABELS[targetAdmin.role] || 'GreenSort Admin';
+    let emailSent = false;
+    let emailFailureMessage = '';
+
+    try {
+      await transporter.sendMail({
+        from: `"GreenSort Admin" <${gmailUser}>`,
+        to: targetEmail,
+        subject: 'Your GreenSort Admin password was changed',
+        text: [
+          `Hello ${targetName},`,
+          '',
+          'Your GreenSort Admin password has been changed by a Super Admin.',
+          'For your security, the new password is not included in this email.',
+          '',
+          'If you did not expect this change, contact your GreenSort Super Admin immediately.',
+        ].join('\n'),
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d2a23;line-height:1.6">
+            <h2 style="color:#2d6a4f;margin-bottom:16px">GreenSort Admin security notice</h2>
+            <p>Hello ${escapeHtml(targetName)},</p>
+            <p>Your GreenSort Admin password has been changed by a Super Admin.</p>
+            <p><strong>For your security, the new password is not included in this email.</strong></p>
+            <p>If you did not expect this change, contact your GreenSort Super Admin immediately.</p>
+          </div>
+        `,
+      });
+      emailSent = true;
+    } catch (emailError) {
+      emailFailureMessage = emailError instanceof Error ? emailError.message : String(emailError);
+      console.error('Password notification email failed:', emailFailureMessage);
+    }
+
+    const { error: auditError } = await adminClient.from('admin_activity_log').insert({
+      actor_email: callerEmail,
+      action: 'changed_admin_password',
+      target_email: targetEmail,
+      metadata: {
+        target_role: targetAdmin.role,
+        target_role_label: ROLE_LABELS[targetAdmin.role] || targetAdmin.role,
+        email_notification_sent: emailSent,
+      },
+    });
+
+    if (auditError) {
+      console.error('Password-change audit log failed:', auditError.message);
+    }
+
+    if (!emailSent) {
+      return jsonResponse({
+        success: true,
+        email_sent: false,
+        audit_logged: !auditError,
+        message:
+          'Password changed successfully, but the notification email could not be sent. Check the Edge Function logs.',
+      });
+    }
+
+    return jsonResponse({
       success: true,
-      message:
-        "Admin password changed successfully. The new password was not emailed.",
+      email_sent: true,
+      audit_logged: !auditError,
+      message: `Password changed successfully. A notification was sent to ${targetEmail}.`,
     });
   } catch (error) {
     console.error(
-      "Admin change password error:",
-      error
+      'Unexpected admin-change-password error:',
+      error instanceof Error ? error.message : error
     );
-
-    return json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to change admin password.",
-      },
-      500
-    );
+    return jsonResponse({ success: false, error: 'An unexpected server error occurred.' }, 500);
   }
 });

@@ -69,6 +69,7 @@ const ROLE_OPTIONS = [
 
 const roleLabel = (role) => ROLE_META[role]?.label || 'Admin';
 const roleDescription = (role) => ROLE_META[role]?.description || ROLE_META.admin.description;
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 
 const RoleBadge = ({ role, light }) => {
   const meta = ROLE_META[role] || ROLE_META.admin;
@@ -160,10 +161,18 @@ export default function AdminAccess() {
   const [updatingRole, setUpdatingRole] = useState(false);
   const [roleError, setRoleError] = useState('');
 
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordAdmin, setPasswordAdmin] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+
   const accentText = isLightMode ? 'text-[#4A7D5C]' : 'text-[#2CD87D]';
 
-  const fetchData = useCallback(async () => {
-    setDataLoading(true);
+  const fetchData = useCallback(async (showLoading = true) => {
+    if (showLoading) setDataLoading(true);
 
     try {
       const [{ data: adminRows, error: adminErr }, { data: invRows, error: invErr }] = await Promise.all([
@@ -178,17 +187,105 @@ export default function AdminAccess() {
       if (adminErr) throw adminErr;
       if (invErr) throw invErr;
 
-      setAdmins(adminRows || []);
-      setInvitations((invRows || []).filter((i) => new Date(i.expires_at) > new Date()));
+      const adminList = adminRows || [];
+      const unusedInvites = (invRows || []).filter(
+        (inv) => new Date(inv.expires_at).getTime() > Date.now()
+      );
+
+      // AcceptInvite tries to set admin_invitations.is_used = true after OTP
+      // verification. If RLS blocks that update, the verified profile is used
+      // as a fallback so the stale invitation no longer appears as pending.
+      let acceptedInviteKeys = new Set();
+
+      if (unusedInvites.length > 0) {
+        const { data: roleProfiles, error: profileErr } = await supabase
+          .from('profiles')
+          .select('email, role')
+          .in('role', ROLE_OPTIONS);
+
+        if (profileErr) {
+          console.warn('Could not cross-check accepted invites from profiles:', profileErr);
+        } else {
+          acceptedInviteKeys = new Set(
+            (roleProfiles || []).map(
+              (profile) => `${normalizeEmail(profile.email)}::${profile.role || 'admin'}`
+            )
+          );
+        }
+      }
+
+      const acceptedStaleInviteIds = [];
+      const pendingInvites = unusedInvites.filter((inv) => {
+        const key = `${normalizeEmail(inv.email)}::${inv.role || 'admin'}`;
+        const wasAccepted = acceptedInviteKeys.has(key);
+
+        if (wasAccepted) acceptedStaleInviteIds.push(inv.id);
+        return !wasAccepted;
+      });
+
+      setAdmins(adminList);
+      setInvitations(pendingInvites);
+
+      // Repair stale rows when the current Super Admin's RLS policy permits it.
+      // The Pending Invites UI does not depend on this cleanup succeeding.
+      if (acceptedStaleInviteIds.length > 0) {
+        const { error: cleanupErr } = await supabase
+          .from('admin_invitations')
+          .update({ is_used: true })
+          .in('id', acceptedStaleInviteIds);
+
+        if (cleanupErr) {
+          console.warn('Could not mark accepted invitations as used:', cleanupErr);
+        }
+      }
     } catch (err) {
       console.error('fetchData error:', err);
     } finally {
-      setDataLoading(false);
+      if (showLoading) setDataLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (!authLoading && isSuperAdmin) fetchData();
+  }, [authLoading, isSuperAdmin, fetchData]);
+
+  useEffect(() => {
+    if (authLoading || !isSuperAdmin) return undefined;
+
+    const refreshSilently = () => fetchData(false);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshSilently();
+    };
+
+    window.addEventListener('focus', refreshSilently);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    const channel = supabase
+      .channel('admin-access-invite-status')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'admin_invitations' },
+        refreshSilently
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        (payload) => {
+          const newRole = payload.new?.role;
+          const oldRole = payload.old?.role;
+
+          if (ROLE_OPTIONS.includes(newRole) || ROLE_OPTIONS.includes(oldRole)) {
+            refreshSilently();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      window.removeEventListener('focus', refreshSilently);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      supabase.removeChannel(channel);
+    };
   }, [authLoading, isSuperAdmin, fetchData]);
 
   const groupedAdmins = useMemo(() => {
@@ -525,6 +622,116 @@ export default function AdminAccess() {
     }
   };
 
+  const closePasswordModal = () => {
+    if (changingPassword) return;
+    setShowPasswordModal(false);
+    setPasswordAdmin(null);
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError('');
+    setPasswordSuccess('');
+  };
+
+  const openPasswordEditor = (admin) => {
+    if (!isSuperAdmin || admin.id === adminUser?.id) return;
+
+    setPasswordAdmin(admin);
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError('');
+    setPasswordSuccess('');
+    setShowPasswordModal(true);
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (!isSuperAdmin) {
+      setPasswordError('Only Super Admin can change admin passwords.');
+      return;
+    }
+
+    if (!passwordAdmin?.email) {
+      setPasswordError('Please select an admin account.');
+      return;
+    }
+
+    if (
+      passwordAdmin.id === adminUser?.id ||
+      normalizeEmail(passwordAdmin.email) === normalizeEmail(adminUser?.email)
+    ) {
+      setPasswordError('You cannot change your own password from Admin Access.');
+      return;
+    }
+
+    if (newPassword.length < 8 || newPassword.length > 72) {
+      setPasswordError('The new password must be between 8 and 72 characters.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('The password confirmation does not match.');
+      return;
+    }
+
+    setChangingPassword(true);
+
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+
+      if (sessionError || !accessToken) {
+        throw new Error('Your session has expired. Please sign in again.');
+      }
+
+      const response = await fetch(
+        'https://yaqpvcriphvcqdmpsfxa.supabase.co/functions/v1/admin-change-password',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            target_email: normalizeEmail(passwordAdmin.email),
+            new_password: newPassword,
+          }),
+        }
+      );
+
+      const responseText = await response.text();
+      let result = {};
+
+      try {
+        result = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        result = {};
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.error ||
+            result.message ||
+            `Password change failed with status ${response.status}.`
+        );
+      }
+
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordSuccess(
+        result.message ||
+          `Password changed successfully. A notification was sent to ${passwordAdmin.email}.`
+      );
+    } catch (err) {
+      console.error('Change password error:', err);
+      setPasswordError(err.message || 'Failed to change the password. Please try again.');
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   const handleResendInvite = async (inv) => {
     if (!isSuperAdmin) return;
 
@@ -796,6 +1003,7 @@ export default function AdminAccess() {
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
                     onEditRole={openRoleEditor}
+                    onChangePassword={openPasswordEditor}
                     amber
                     emptyMessage="No super admins found."
                   />
@@ -809,6 +1017,7 @@ export default function AdminAccess() {
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
                     onEditRole={openRoleEditor}
+                    onChangePassword={openPasswordEditor}
                     emptyMessage="No admins yet."
                   />
 
@@ -821,6 +1030,7 @@ export default function AdminAccess() {
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
                     onEditRole={openRoleEditor}
+                    onChangePassword={openPasswordEditor}
                     emptyMessage="No mobile coordinators yet."
                   />
 
@@ -833,6 +1043,7 @@ export default function AdminAccess() {
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
                     onEditRole={openRoleEditor}
+                    onChangePassword={openPasswordEditor}
                     emptyMessage="No accounting admins yet."
                   />
 
@@ -845,6 +1056,7 @@ export default function AdminAccess() {
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
                     onEditRole={openRoleEditor}
+                    onChangePassword={openPasswordEditor}
                     emptyMessage="No receiving staff admins yet."
                   />
 
@@ -857,6 +1069,7 @@ export default function AdminAccess() {
                     timeAgo={timeAgo}
                     onToggleActive={handleToggleActive}
                     onEditRole={openRoleEditor}
+                    onChangePassword={openPasswordEditor}
                     emptyMessage="No moderators yet."
                   />
                 </div>
@@ -1136,6 +1349,118 @@ export default function AdminAccess() {
         </form>
       </Modal>
 
+      <Modal open={showPasswordModal} onClose={closePasswordModal} light={isLightMode}>
+        <div className={`px-7 py-6 border-b ${isLightMode ? 'border-[#F0F4F1]' : 'border-white/[0.06]'}`}>
+          <h3 className={`text-xl font-bold ${t.textMain}`}>Change Admin Password</h3>
+          <p className={`text-sm ${t.textMuted} mt-1`}>
+            Only a Super Admin can change another admin account&apos;s password.
+          </p>
+        </div>
+
+        <form onSubmit={handleChangePassword} className="px-7 py-6 space-y-5">
+          <div className={`p-4 rounded-2xl border ${isLightMode ? 'bg-[#F9FBF9] border-[#E5ECE7]' : 'bg-[#0A0D10] border-white/[0.06]'}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className={`font-bold text-sm truncate ${t.textMain}`}>
+                  {passwordAdmin?.full_name || '—'}
+                </p>
+                <p className={`text-xs mt-1 truncate ${t.textMuted}`}>{passwordAdmin?.email}</p>
+              </div>
+              {passwordAdmin?.role && (
+                <RoleBadge role={passwordAdmin.role} light={isLightMode} />
+              )}
+            </div>
+          </div>
+
+          <div className={`p-3 rounded-xl border ${isLightMode ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/10 border-blue-500/20 text-blue-300'}`}>
+            <p className="text-xs leading-relaxed font-medium">
+              After the password is changed, this admin will receive a security email. The new password will not be included in the email.
+            </p>
+          </div>
+
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>
+              New Password *
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              minLength={8}
+              maxLength={72}
+              autoComplete="new-password"
+              placeholder="8–72 characters"
+              disabled={changingPassword}
+              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all disabled:opacity-60 ${
+                isLightMode
+                  ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23] focus:border-[#6C9A7D]'
+                  : 'bg-[#0A0D10] border-white/[0.05] text-white focus:border-[#2CD87D]/40'
+              }`}
+            />
+          </div>
+
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-widest mb-2 ${accentText}`}>
+              Confirm New Password *
+            </label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              minLength={8}
+              maxLength={72}
+              autoComplete="new-password"
+              placeholder="Enter the new password again"
+              disabled={changingPassword}
+              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all disabled:opacity-60 ${
+                isLightMode
+                  ? 'bg-[#F0F4F1] border-[#E5ECE7] text-[#1D2A23] focus:border-[#6C9A7D]'
+                  : 'bg-[#0A0D10] border-white/[0.05] text-white focus:border-[#2CD87D]/40'
+              }`}
+            />
+          </div>
+
+          {passwordError && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <p className="text-red-400 text-sm font-medium">{passwordError}</p>
+            </div>
+          )}
+
+          {passwordSuccess && (
+            <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+              <p className="text-green-500 text-sm font-bold">{passwordSuccess}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={closePasswordModal}
+              disabled={changingPassword}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm border transition-all disabled:opacity-60 ${
+                isLightMode
+                  ? 'border-[#E5ECE7] text-[#6B7A74] hover:bg-[#F0F4F1]'
+                  : 'border-white/[0.07] text-[#8A9B96] hover:bg-white/[0.03]'
+              }`}
+            >
+              Close
+            </button>
+
+            <button
+              type="submit"
+              disabled={changingPassword || !newPassword || !confirmPassword || Boolean(passwordSuccess)}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-60 ${
+                isLightMode
+                  ? 'bg-[#4A7D5C] text-white hover:bg-[#3A6B4C]'
+                  : 'bg-[#2CD87D] text-[#0A0D10] hover:bg-[#00E676]'
+              }`}
+            >
+              {changingPassword ? 'Changing Password…' : 'Change Password'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       <style
         dangerouslySetInnerHTML={{
           __html: `
@@ -1157,6 +1482,7 @@ function AdminTable({
   timeAgo,
   onToggleActive,
   onEditRole,
+  onChangePassword,
   amber,
   emptyMessage,
 }) {
@@ -1204,6 +1530,7 @@ function AdminTable({
                 timeAgo={timeAgo}
                 onToggleActive={onToggleActive}
                 onEditRole={onEditRole}
+                onChangePassword={onChangePassword}
               />
             ))}
           </tbody>
@@ -1214,7 +1541,16 @@ function AdminTable({
   );
 }
 
-function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive, onEditRole }) {
+function AdminRow({
+  admin,
+  currentAdmin,
+  isLightMode,
+  t,
+  timeAgo,
+  onToggleActive,
+  onEditRole,
+  onChangePassword,
+}) {
   const isSelf = admin.id === currentAdmin?.id;
 
   return (
@@ -1259,6 +1595,21 @@ function AdminRow({ admin, currentAdmin, isLightMode, t, timeAgo, onToggleActive
             <span className={`text-[11px] font-semibold ${t.textMuted}`}>Current account</span>
           ) : (
             <>
+              <button
+                onClick={() => onChangePassword(admin)}
+                className={`p-2 rounded-lg transition-all ${t.textMuted} ${
+                  isLightMode
+                    ? 'hover:text-blue-600 hover:bg-blue-50'
+                    : 'hover:text-blue-300 hover:bg-blue-500/10'
+                }`}
+                title="Change password"
+                aria-label={`Change password for ${admin.email}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+              </button>
+
               <button
                 onClick={() => onEditRole(admin)}
                 className={`p-2 rounded-lg transition-all ${t.textMuted} ${
