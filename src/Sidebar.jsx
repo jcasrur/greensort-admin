@@ -48,7 +48,7 @@ const NAV_GROUPS = [
     label: 'Operations',
     items: [
       { path: '/dashboard',      label: 'Overview',       icon: Icons.overview, module: null },
-      { path: '/surrender-logs', label: 'Surrender Logs', icon: Icons.logs,     module: null },
+      { path: '/surrender-logs', label: 'Surrender Logs', icon: Icons.logs,     module: 'mrf' },
     ],
   },
   {
@@ -180,10 +180,6 @@ export default function Sidebar() {
   const currentTitle = useMemo(() => {
     const allItems = [...NAV_GROUPS.flatMap(group => group.items), ...SYSTEM_ITEMS];
     return allItems.find(item => location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path)))?.label || 'Admin Panel';
-  }, [location.pathname]);
-
-  useEffect(() => {
-    setMobileOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
