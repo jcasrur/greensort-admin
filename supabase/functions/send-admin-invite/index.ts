@@ -125,19 +125,6 @@ Deno.serve(async (request: Request) => {
       );
     }
 
-    const { data: claimsData, error: claimsError } =
-      await userClient.auth.getClaims(accessToken);
-
-    if (claimsError || claimsData?.claims?.aal !== 'aal2') {
-      return jsonResponse(
-        {
-          success: false,
-          error: 'Google Authenticator verification is required.',
-        },
-        403
-      );
-    }
-
     const callerEmail = normalizeEmail(caller.email);
 
     const { data: callerAdmin, error: callerAdminError } =
