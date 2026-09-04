@@ -192,52 +192,10 @@ export default function AdminAccess() {
         (inv) => new Date(inv.expires_at).getTime() > Date.now()
       );
 
-      // AcceptInvite tries to set admin_invitations.is_used = true after OTP
-      // verification. If RLS blocks that update, the verified profile is used
-      // as a fallback so the stale invitation no longer appears as pending.
-      let acceptedInviteKeys = new Set();
-
-      if (unusedInvites.length > 0) {
-        const { data: roleProfiles, error: profileErr } = await supabase
-          .from('profiles')
-          .select('email, role')
-          .in('role', ROLE_OPTIONS);
-
-        if (profileErr) {
-          console.warn('Could not cross-check accepted invites from profiles:', profileErr);
-        } else {
-          acceptedInviteKeys = new Set(
-            (roleProfiles || []).map(
-              (profile) => `${normalizeEmail(profile.email)}::${profile.role || 'admin'}`
-            )
-          );
-        }
-      }
-
-      const acceptedStaleInviteIds = [];
-      const pendingInvites = unusedInvites.filter((inv) => {
-        const key = `${normalizeEmail(inv.email)}::${inv.role || 'admin'}`;
-        const wasAccepted = acceptedInviteKeys.has(key);
-
-        if (wasAccepted) acceptedStaleInviteIds.push(inv.id);
-        return !wasAccepted;
-      });
-
       setAdmins(adminList);
-      setInvitations(pendingInvites);
-
-      // Repair stale rows when the current Super Admin's RLS policy permits it.
-      // The Pending Invites UI does not depend on this cleanup succeeding.
-      if (acceptedStaleInviteIds.length > 0) {
-        const { error: cleanupErr } = await supabase
-          .from('admin_invitations')
-          .update({ is_used: true })
-          .in('id', acceptedStaleInviteIds);
-
-        if (cleanupErr) {
-          console.warn('Could not mark accepted invitations as used:', cleanupErr);
-        }
-      }
+      // An invitation remains pending until AcceptInvite successfully verifies
+      // the email OTP and complete_admin_invitation() marks it as used.
+      setInvitations(unusedInvites);
     } catch (err) {
       console.error('fetchData error:', err);
     } finally {
