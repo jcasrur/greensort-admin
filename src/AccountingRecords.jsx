@@ -192,7 +192,11 @@ export default function AccountingRecords() {
 
   // Summary stats
   const summary = useMemo(() => {
-    const all = logs;
+    const all = logs.filter(l => {
+      if (dateFrom && new Date(l.created_at) < new Date(`${dateFrom}T00:00:00`)) return false;
+      if (dateTo && new Date(l.created_at) > new Date(`${dateTo}T23:59:59.999`)) return false;
+      return true;
+    });
     return {
       total:     all.length,
       verified:  all.filter(l => (l.encoded_status||'').toLowerCase() === 'verified').length,
@@ -203,7 +207,7 @@ export default function AccountingRecords() {
       fundCredited: all.filter(l => (l.encoded_status||'').toLowerCase() === 'credited to fund')
                        .reduce((s, l) => s + (Number(l.estimated_credit)||0), 0),
     };
-  }, [logs]);
+  }, [logs, dateFrom, dateTo]);
 
   // Filter
   const filtered = useMemo(() => {

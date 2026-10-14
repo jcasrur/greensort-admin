@@ -26,6 +26,8 @@ const Dashboard = () => {
   const [metrics, setMetrics] = useState({
     totalStudents: 0,
     totalAccounts: 0,
+    totalAdmins: 0,
+    totalProfileStudents: 0,
     activeCenters: 0,
     totalReceivedKg: 0,
     weekReceivedKg: 0,
@@ -62,6 +64,11 @@ const Dashboard = () => {
         countRows('dropoff_applications', q => q.eq('status', 'approved')),
       ]);
 
+      const [adminCount, profileStudentCount] = await Promise.all([
+        countRows('profiles', q => q.in('role', ['admin', 'super_admin'])),
+        countRows('profiles', q => q.in('role', ['student', 'students'])),
+      ]);
+
       const [{ data: surrenderData, error: surrenderError }, { data: inventoryData, error: inventoryError }] = await Promise.all([
         supabase.from('surrender_logs').select('*').order('created_at', { ascending: false }).limit(500),
         supabase.from('rewards_inventory').select('*').order('created_at', { ascending: false }).limit(500),
@@ -91,6 +98,8 @@ const Dashboard = () => {
       setMetrics({
         totalStudents: studentCount,
         totalAccounts: accountCount,
+        totalAdmins: adminCount,
+        totalProfileStudents: profileStudentCount,
         activeCenters: centerCount,
         totalReceivedKg,
         weekReceivedKg,

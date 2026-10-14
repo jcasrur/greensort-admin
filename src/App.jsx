@@ -17,6 +17,7 @@ import SurrenderLogs     from './SurrenderLogs';
 import Unauthorized      from './Unauthorized';
 import ProtectedRoute    from './ProtectedRoute';
 import StudentsRecord    from './StudentsRecord';
+import Users             from './Users';
 import AccountingRecords from './AccountingRecords';
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
                 <Route path="/unauthorized" element={<Unauthorized />} />
 
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>}/>
+                <Route path="/users" element={<ProtectedRoute module="users"><Users /></ProtectedRoute>}/>
                 <Route path="/students"  element={<ProtectedRoute module="students"><StudentsRecord /></ProtectedRoute>}/>
                 <Route path="/accounting" element={<ProtectedRoute module="accounting"><AccountingRecords /></ProtectedRoute>}/>
                 <Route path="/surrender-logs" element={<ProtectedRoute module="mrf"><SurrenderLogs /></ProtectedRoute>}/>

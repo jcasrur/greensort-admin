@@ -133,7 +133,6 @@ export default function SurrenderLogs() {
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
 
-  const [stats, setStats] = useState({ total: 0, totalKg: 0, uniqueStudents: 0, estimatedFundValue: 0, creditedToFund: 0, flagged: 0 });
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -147,13 +146,7 @@ export default function SurrenderLogs() {
       const rows = data || [];
       setLogs(rows);
 
-      const totalKg           = rows.reduce((s, r) => s + (Number(r.weight_kg) || 0), 0);
-      const uniqueStudents    = new Set(rows.map(r => r.resident_email)).size;
-      const estimatedFundVal  = rows.filter(r => String(r.encoded_status || r.status || '').toLowerCase() !== 'rejected').reduce((s, r) => s + (Number(r.estimated_credit) || 0), 0);
-      const creditedToFund    = rows.filter(r => String(r.encoded_status || r.status || '').toLowerCase() === 'credited to fund').reduce((s, r) => s + (Number(r.estimated_credit) || 0), 0);
-      const flagged           = rows.filter(r => Number(r.weight_kg) > 50).length;
 
-      setStats({ total: rows.length, totalKg: totalKg.toFixed(1), uniqueStudents, estimatedFundValue: estimatedFundVal, creditedToFund, flagged });
     } catch (e) {
       console.error('fetchLogs error:', e);
     } finally {
@@ -251,6 +244,21 @@ export default function SurrenderLogs() {
     return true;
   });
 
+  // Summary cards use the same date-filtered rows as the table.
+  const summaryRows = logs.filter(r => {
+    if (dateFrom && new Date(r.created_at) < new Date(`${dateFrom}T00:00:00`)) return false;
+    if (dateTo && new Date(r.created_at) > new Date(`${dateTo}T23:59:59.999`)) return false;
+    return true;
+  });
+  const stats = {
+    total: summaryRows.length,
+    totalKg: summaryRows.reduce((sum, r) => sum + (Number(r.weight_kg) || 0), 0).toFixed(1),
+    uniqueStudents: new Set(summaryRows.map(r => r.resident_email).filter(Boolean)).size,
+    estimatedFundValue: summaryRows.filter(r => String(r.encoded_status || r.status || '').toLowerCase() !== 'rejected').reduce((sum, r) => sum + (Number(r.estimated_credit) || 0), 0),
+    creditedToFund: summaryRows.filter(r => String(r.encoded_status || r.status || '').toLowerCase() === 'credited to fund').reduce((sum, r) => sum + (Number(r.estimated_credit) || 0), 0),
+    flagged: summaryRows.filter(r => Number(r.weight_kg) > 50).length,
+  };
+
   useEffect(() => { setPage(1); }, [search, wasteType, statusFilter, allocationFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -297,10 +305,10 @@ export default function SurrenderLogs() {
 
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <Stat label="Total Submissions" value={stats.total.toLocaleString()} sub="All time" iconBg={t.iconBg1} t={t}
+            <Stat label="Total Submissions" value={stats.total.toLocaleString()} sub="Selected dates" iconBg={t.iconBg1} t={t}
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>}
             />
-            <Stat label="Total KG Contributed" value={`${Number(stats.totalKg).toLocaleString()} kg`} sub="Network-wide" iconBg={t.iconBg2} t={t}
+            <Stat label="Total KG Contributed" value={`${Number(stats.totalKg).toLocaleString()} kg`} sub="Selected dates" iconBg={t.iconBg2} t={t}
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>}
             />
             <Stat label="Estimated Fund Value" value={fmtPeso(stats.estimatedFundValue)} sub="Pending credit" iconBg={t.iconBg1} t={t}

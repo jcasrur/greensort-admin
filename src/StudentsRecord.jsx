@@ -1,13 +1,21 @@
 // StudentsRecord.jsx
-// Shows students from `students` and merges matching `profiles` account data.
+// Student identities are enriched from `profiles` and legacy `students` records; only contributors appear.
+// Contribution history and date-aware metrics come from `surrender_logs`.
 // Includes import/export, template download, duplicate validation, section/status filters, archive/restore, and imported history logs.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from './supabase';
 import Sidebar from './Sidebar';
 import { useTheme, ThemedCard } from './ThemeContext';
+import { GraduationCap, UserCheck, Recycle, Wallet } from 'lucide-react';
 
 const fmtFull = (ds) => ds ? new Date(ds).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+const normalizeDay = (value) => String(value || '').slice(0, 10);
+const logInDateRange = (log, from, to) => {
+  if (!from && !to) return true;
+  const day = normalizeDay(log.date_received || log.created_at);
+  return Boolean(day) && (!from || day >= from) && (!to || day <= to);
+};
 const peso = (v) => `₱${Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const FUND_STATUS_CHIP = {
@@ -227,36 +235,16 @@ function saveImportLogs(logs) {
 }
 
 // ── Student Detail Drawer ──────────────────────────────────────────────────────
-function StudentDrawer({ student, onClose, onArchive, isLightMode, t }) {
+function StudentDrawer({ student, onClose, onArchive, isLightMode, t, dateFrom, dateTo }) {
   const [logs,    setLogs]    = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Reuse the same matched logs as the table, so the history and totals always agree.
   useEffect(() => {
-    if (!student) return;
-    setLoading(true);
-
-    const studentEmail = student.email || student.school_email || student.profile_email;
-    const filters = [];
-    if (student.lrn) filters.push(`lrn.eq.${student.lrn}`);
-    if (studentEmail) filters.push(`resident_email.eq.${studentEmail}`);
-
-    let query = supabase
-      .from('surrender_logs')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (filters.length) {
-      query = query.or(filters.join(','));
-    } else {
-      query = query.eq('id', -1);
-    }
-
-    query.then(({ data, error }) => {
-      if (error) console.error('load student history error:', error);
-      setLogs(data || []);
-      setLoading(false);
-    });
-  }, [student]);
+    setLoading(false);
+    setLogs((student?._matchedLogs || []).filter(log => logInDateRange(log, dateFrom, dateTo))
+      .sort((a, b) => new Date(b.date_received || b.created_at || 0) - new Date(a.date_received || a.created_at || 0)));
+  }, [student, dateFrom, dateTo]);
 
   if (!student) return null;
 
@@ -513,11 +501,12 @@ export default function StudentsRecord() {
   const [gradeFilter, setGradeFilter] = useState('All');
   const [sectionFilter, setSectionFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [selected,  setSelected]  = useState(null);
   const [page,      setPage]      = useState(1);
   const PAGE_SIZE = 30;
 
-  const [stats, setStats] = useState({ total: 0, active: 0, totalKg: 0, totalFund: 0 });
   const [importPreview, setImportPreview] = useState([]);
   const [importFileName, setImportFileName] = useState('');
   const [showImportPreview, setShowImportPreview] = useState(false);
@@ -541,14 +530,15 @@ export default function StudentsRecord() {
         supabase
           .from('profiles')
           .select('*')
-          .in('role', ['student', 'Student']),
+          .in('role', ['student', 'Student', 'resident', 'Resident']),
         supabase
           .from('surrender_logs')
-          .select('resident_email, lrn, weight_kg, estimated_credit'),
+          .select('*'),
       ]);
 
       if (studentsResult.error) throw studentsResult.error;
-      if (profilesResult.error) console.warn('profiles merge skipped:', profilesResult.error.message || profilesResult.error);
+      if (profilesResult.error) throw profilesResult.error;
+      if (logsResult.error) throw logsResult.error;
 
       const studentRows = studentsResult.data || [];
       const profileRows = profilesResult.error ? [] : (profilesResult.data || []);
@@ -602,13 +592,13 @@ export default function StudentsRecord() {
           has_app_account: Boolean(matchedProfile),
           account_label: matchedProfile ? 'Registered' : 'No App Account',
           profile_email: matchedProfile?.email || '',
-          email: student.school_email || student.email || matchedProfile?.email || matchedProfile?.school_email || '',
+          email: matchedProfile?.email || matchedProfile?.school_email || student.school_email || student.email || '',
           avatar_url: matchedProfile?.avatar_url || student.avatar_url || '',
-          full_name: student.full_name || matchedProfile?.full_name || '',
-          lrn: student.lrn || matchedProfile?.lrn || '',
-          section: student.section || matchedProfile?.section || '',
-          grade_level: student.grade_level || matchedProfile?.grade_level || '',
-          status: student.status || 'Active',
+          full_name: matchedProfile?.full_name || student.full_name || '',
+          lrn: matchedProfile?.lrn || student.lrn || '',
+          section: matchedProfile?.section || student.section || '',
+          grade_level: matchedProfile?.grade_level || student.grade_level || '',
+          status: matchedProfile?.status || student.status || 'Active',
           account_status: matchedProfile?.account_status || matchedProfile?.status || '',
         };
 
@@ -618,6 +608,7 @@ export default function StudentsRecord() {
           _kg: matchedLogs.reduce((sum, l) => sum + Number(l.weight_kg || 0), 0),
           _fund: matchedLogs.reduce((sum, l) => sum + Number(l.estimated_credit || 0), 0),
           _count: matchedLogs.length,
+          _matchedLogs: matchedLogs,
         };
       });
 
@@ -644,6 +635,7 @@ export default function StudentsRecord() {
             _kg: matchedLogs.reduce((sum, l) => sum + Number(l.weight_kg || 0), 0),
             _fund: matchedLogs.reduce((sum, l) => sum + Number(l.estimated_credit || 0), 0),
             _count: matchedLogs.length,
+            _matchedLogs: matchedLogs,
           };
         });
 
@@ -651,12 +643,7 @@ export default function StudentsRecord() {
         .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
 
       setStudents(enriched);
-      setStats({
-        total: enriched.length,
-        active: enriched.filter(s => (s.status || 'active').toLowerCase() === 'active').length,
-        totalKg: enriched.reduce((a, s) => a + s._kg, 0).toFixed(1),
-        totalFund: enriched.reduce((a, s) => a + s._fund, 0).toFixed(2),
-      });
+
     } catch (e) {
       console.error('fetchStudents error:', e);
       alert(`Failed to load students: ${e.message || e}`);
@@ -691,12 +678,30 @@ export default function StudentsRecord() {
       if (q && !s.full_name?.toLowerCase().includes(q) && !s.email?.toLowerCase().includes(q) && !s.school_email?.toLowerCase().includes(q) && !s.lrn?.includes(q) && !s.section?.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [students, search, gradeFilter, sectionFilter, statusFilter]);
+  }, [students, search, gradeFilter, sectionFilter, statusFilter, dateFrom, dateTo]);
 
-  useEffect(() => { setPage(1); }, [search, gradeFilter, sectionFilter, statusFilter]);
+  useEffect(() => { setPage(1); }, [search, gradeFilter, sectionFilter, statusFilter, dateFrom, dateTo]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+  // Only students with surrender transactions in the selected period appear.
+  const dateAwareStudents = useMemo(() => filtered.map(student => {
+    const periodLogs = (student._matchedLogs || []).filter(log => logInDateRange(log, dateFrom, dateTo));
+    return {
+      ...student,
+      _count: periodLogs.length,
+      _kg: periodLogs.reduce((sum, log) => sum + Number(log.weight_kg || 0), 0),
+      _fund: periodLogs.reduce((sum, log) => sum + Number(log.estimated_credit || 0), 0),
+    };
+  }).filter(student => student._count > 0), [filtered, dateFrom, dateTo]);
+
+  const stats = useMemo(() => ({
+    total: dateAwareStudents.length,
+    active: dateAwareStudents.filter(s => String(s.status || 'active').toLowerCase() === 'active').length,
+    totalKg: dateAwareStudents.reduce((sum, s) => sum + s._kg, 0).toFixed(1),
+    totalFund: dateAwareStudents.reduce((sum, s) => sum + s._fund, 0).toFixed(2),
+  }), [dateAwareStudents]);
+
+  const totalPages = Math.max(1, Math.ceil(dateAwareStudents.length / PAGE_SIZE));
+  const paginated  = dateAwareStudents.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
 
   const validateImportRows = useCallback((objects) => {
     const officialRecords = students.filter(s => s.source_table !== 'profiles');
@@ -878,6 +883,8 @@ export default function StudentsRecord() {
     setGradeFilter('All');
     setSectionFilter('All');
     setStatusFilter('All');
+    setDateFrom('');
+    setDateTo('');
   };
 
   return (
@@ -909,19 +916,24 @@ export default function StudentsRecord() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {[
-              { label: 'Total Students',    value: stats.total,                         iconBg: t.iconBg1, icon: '🎓' },
-              { label: 'Active Students',   value: stats.active,                        iconBg: t.iconBg1, icon: '✅' },
-              { label: 'Total KG Contributed', value: `${Number(stats.totalKg).toLocaleString()} kg`, iconBg: t.iconBg2, icon: '♻️' },
-              { label: 'Total Fund Value',  value: peso(stats.totalFund),               iconBg: t.iconBg1, icon: '💰' },
-            ].map(s => (
-              <ThemedCard key={s.label} className="flex flex-col gap-3 h-[120px]">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg ${s.iconBg}`}>{s.icon}</div>
-                <div>
-                  <p className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1`}>{s.label}</p>
-                  <p className={`text-2xl font-bold ${t.textMain} leading-none`}>{s.value}</p>
-                </div>
-              </ThemedCard>
-            ))}
+              { label: 'Total Students',       value: stats.total,                             iconBg: t.iconBg1, icon: GraduationCap },
+              { label: 'Active Students',      value: stats.active,                            iconBg: t.iconBg1, icon: UserCheck },
+              { label: 'Total KG Contributed', value: `${Number(stats.totalKg).toLocaleString()} kg`, iconBg: t.iconBg2, icon: Recycle },
+              { label: 'Total Fund Value',     value: peso(stats.totalFund),                   iconBg: t.iconBg1, icon: Wallet },
+            ].map(s => {
+              const Icon = s.icon;
+              return (
+                <ThemedCard key={s.label} className="flex flex-col gap-3 h-[120px]">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${s.iconBg}`}>
+                    <Icon size={24} strokeWidth={2} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1`}>{s.label}</p>
+                    <p className={`text-2xl font-bold ${t.textMain} leading-none`}>{s.value}</p>
+                  </div>
+                </ThemedCard>
+              );
+            })}
           </div>
 
           <div className={`rounded-2xl border p-4 mb-6 flex flex-wrap gap-3 items-end ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.05]'}`}>
@@ -950,10 +962,18 @@ export default function StudentsRecord() {
                 {statuses.map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
-            {(search || gradeFilter !== 'All' || sectionFilter !== 'All' || statusFilter !== 'All') && (
+            <div className="w-full sm:w-auto sm:min-w-[150px]">
+              <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Date From</label>
+              <input type="date" className={`${inputCls} w-full`} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            </div>
+            <div className="w-full sm:w-auto sm:min-w-[150px]">
+              <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Date To</label>
+              <input type="date" className={`${inputCls} w-full`} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </div>
+            {(search || gradeFilter !== 'All' || sectionFilter !== 'All' || statusFilter !== 'All' || dateFrom || dateTo) && (
               <button onClick={resetFilters} className={`px-3 py-2 rounded-xl text-xs font-bold border ${isLightMode ? 'border-red-200 bg-red-50 text-red-600' : 'border-red-500/20 bg-red-500/8 text-red-400'}`}>Clear</button>
             )}
-            <p className={`w-full text-[11px] ${t.textMuted} -mb-1`}>Showing <strong className={t.textMain}>{filtered.length}</strong> of <strong className={t.textMain}>{students.length}</strong> students</p>
+            <p className={`w-full text-[11px] ${t.textMuted} -mb-1`}>Showing <strong className={t.textMain}>{dateAwareStudents.length}</strong> students with contributions</p>
           </div>
 
           <ThemedCard className="!p-0 overflow-hidden mb-6">
@@ -1066,6 +1086,8 @@ export default function StudentsRecord() {
       {selected && (
         <StudentDrawer
           student={selected}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
           onClose={() => setSelected(null)}
           onArchive={archiveStudent}
           isLightMode={isLightMode}

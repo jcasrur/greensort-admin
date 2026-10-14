@@ -9,6 +9,7 @@ const PERMISSIONS = {
   super_admin: [
     'mrf',
     'inventory',
+    'users',
     'students',
     'accounting',
     'reports',
@@ -18,6 +19,7 @@ const PERMISSIONS = {
   ],
 
   admin: [
+    'users',
     'students',
     'reports',
     'fund_dashboard',
