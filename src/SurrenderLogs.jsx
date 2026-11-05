@@ -13,6 +13,11 @@ const fmt = (ds) =>
 const fmtFull = (ds) =>
   new Date(ds).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 
+const dateInManila = (value) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+const shiftManilaDate = (dateString, days) => { const d = new Date(`${dateString}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
+const fmtKg = (value) => `${Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 3 })} kg`;
+const isEligibleStock = (r) => !r.waste_pickup_id && String(r.encoded_status || '').toLowerCase() !== 'rejected' && String(r.status || '').toLowerCase() !== 'rejected';
+
 const fmtPeso = (value) => {
   const n = Number(value) || 0;
   return `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -122,6 +127,20 @@ export default function SurrenderLogs() {
   const [logs,        setLogs]        = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [logToDelete, setLogToDelete] = useState(null);
+  const [pickups, setPickups] = useState([]);
+  const [pickupError, setPickupError] = useState('');
+  const [pickupModal, setPickupModal] = useState(false);
+  const [showCollectionView, setShowCollectionView] = useState(false);
+  const [collectorName, setCollectorName] = useState('');
+  const [pickupNotes, setPickupNotes] = useState('');
+  const [pickupDateFrom, setPickupDateFrom] = useState('');
+  const [pickupDateTo, setPickupDateTo] = useState('');
+  const [savingPickup, setSavingPickup] = useState(false);
+  const [pickupConfirmed, setPickupConfirmed] = useState(false);
+  const [collectionFilter, setCollectionFilter] = useState('All');
+  const [overviewDateFrom, setOverviewDateFrom] = useState('');
+  const [overviewDateTo, setOverviewDateTo] = useState('');
+  const [overviewPreset, setOverviewPreset] = useState('all');
 
   const [search,         setSearch]         = useState('');
   const [wasteType,      setWasteType]      = useState('All');
@@ -137,14 +156,26 @@ export default function SurrenderLogs() {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('surrender_logs')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-
-      const rows = data || [];
+      // Supabase defaults to a 1,000-row response; paginate for accurate stock totals.
+      const rows = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('surrender_logs').select('*')
+          .order('created_at', { ascending: false }).order('id', { ascending: false })
+          .range(from, from + 999);
+        if (error) throw error;
+        rows.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
       setLogs(rows);
+      const { data: batchRows, error: batchError } = await supabase
+        .from('waste_pickups').select('*').order('collected_at', { ascending: false }).limit(100);
+      if (batchError) {
+        setPickupError('Pickup tracking is not initialized. Run supabase/20261106_waste_pickups.sql in your Supabase SQL Editor, then refresh. ' + batchError.message);
+      } else {
+        setPickups(batchRows || []);
+        setPickupError('');
+      }
 
 
     } catch (e) {
@@ -157,6 +188,7 @@ export default function SurrenderLogs() {
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
   const handleDelete = async (log, reason) => {
+    if (log.waste_pickup_id) { alert('Collected logs must be retained for pickup audit history.'); return; }
     try {
       const { error } = await supabase.from('surrender_logs').delete().eq('id', log.id);
       if (error) throw error;
@@ -171,6 +203,30 @@ export default function SurrenderLogs() {
       alert('Log deleted and action recorded in audit trail.');
     } catch (e) {
       alert('Error: ' + e.message);
+    }
+  };
+
+  const handlePickup = async () => {
+    if (savingPickup || !pickupConfirmed || !pickupDatesValid || !collectorName.trim() || !pickupRows.length) return;
+    setSavingPickup(true);
+    try {
+      const { error } = await supabase.rpc('record_waste_pickup', {
+        p_collector_name: collectorName.trim(),
+        p_notes: pickupNotes.trim() || null,
+        p_date_from: pickupDateFrom,
+        p_date_to: pickupDateTo,
+      });
+      if (error) throw error;
+      setPickupModal(false);
+      setCollectorName('');
+      setPickupNotes('');
+      setPickupConfirmed(false);
+      await fetchLogs();
+      alert(`Waste pickup recorded for surrender dates ${pickupDateFrom} through ${pickupDateTo}. Only matching uncollected waste was marked collected.`);
+    } catch (error) {
+      alert('Unable to record pickup: ' + error.message);
+    } finally {
+      setSavingPickup(false);
     }
   };
 
@@ -216,7 +272,7 @@ export default function SurrenderLogs() {
 };
 
   const handleExport = () => {
-    const cols = ['id', 'created_at', 'resident_name', 'resident_email', 'collector_email', 'waste_type', 'weight_kg', 'points_earned', 'estimated_credit', 'contribution_type', 'classroom_section', 'encoded_status'];
+    const cols = ['id', 'created_at', 'resident_name', 'resident_email', 'collector_email', 'waste_type', 'weight_kg', 'points_earned', 'estimated_credit', 'contribution_type', 'classroom_section', 'encoded_status', 'waste_collected_at', 'waste_pickup_id'];
     const header = cols.join(',');
     const rows = filtered.map(r => cols.map(c => `"${String(r[c] ?? '').replace(/"/g, '""')}"`).join(','));
     const csv  = [header, ...rows].join('\n');
@@ -235,21 +291,81 @@ export default function SurrenderLogs() {
       const st = String(r.encoded_status || r.status || '').toLowerCase();
       if (!st.includes(statusFilter.toLowerCase())) return false;
     }
+    if (collectionFilter === 'Available' && !isEligibleStock(r)) return false;
+    if (collectionFilter === 'Collected' && !r.waste_pickup_id) return false;
     if (allocationFilter !== 'All') {
       const at = String(r.contribution_type || r.scholarship_allocation || '');
       if (at !== allocationFilter) return false;
     }
-    if (dateFrom && new Date(r.created_at) < new Date(dateFrom)) return false;
-    if (dateTo   && new Date(r.created_at) > new Date(dateTo + 'T23:59:59')) return false;
+    if (dateFrom && dateInManila(r.created_at) < dateFrom) return false;
+    if (dateTo && dateInManila(r.created_at) > dateTo) return false;
     return true;
   });
 
   // Summary cards use the same date-filtered rows as the table.
   const summaryRows = logs.filter(r => {
-    if (dateFrom && new Date(r.created_at) < new Date(`${dateFrom}T00:00:00`)) return false;
-    if (dateTo && new Date(r.created_at) > new Date(`${dateTo}T23:59:59.999`)) return false;
+    if (dateFrom && dateInManila(r.created_at) < dateFrom) return false;
+    if (dateTo && dateInManila(r.created_at) > dateTo) return false;
     return true;
   });
+  // Available stock is GLOBAL, never restricted to a date-filtered table view.
+  const availableRows = logs.filter(isEligibleStock);
+  const collectedRows = logs.filter(r => !!r.waste_pickup_id);
+  const pickupDatesValid = !!pickupDateFrom && !!pickupDateTo && pickupDateFrom <= pickupDateTo && pickupDateTo <= dateInManila(Date.now());
+  const pickupRows = pickupDatesValid ? availableRows.filter(r => {
+    const day = dateInManila(r.created_at);
+    return day >= pickupDateFrom && day <= pickupDateTo;
+  }) : [];
+  const groupWaste = (rows) => Object.entries(rows.reduce((acc, row) => {
+    const name = (row.waste_type || 'Unspecified').trim() || 'Unspecified';
+    if (!acc[name]) acc[name] = { kg: 0, count: 0 };
+    acc[name].kg += Math.max(0, Number(row.weight_kg) || 0);
+    acc[name].count++;
+    return acc;
+  }, {})).map(([type, values]) => ({ type, ...values })).sort((a, b) => b.kg - a.kg);
+  const availableBreakdown = groupWaste(availableRows);
+  const pickupBreakdown = groupWaste(pickupRows);
+  const pickupKg = pickupBreakdown.reduce((total, group) => total + group.kg, 0);
+  const availableKg = availableBreakdown.reduce((total, group) => total + group.kg, 0);
+  const collectedKg = collectedRows.reduce((sum, r) => sum + Math.max(0, Number(r.weight_kg) || 0), 0);
+  // Overview dates filter SURRENDER dates; collection times are shown separately.
+  const overviewDatesValid = !overviewDateFrom || !overviewDateTo || overviewDateFrom <= overviewDateTo;
+  const applyOverviewPreset = (preset) => {
+    const today = dateInManila(Date.now());
+    setOverviewPreset(preset);
+    if (preset === 'today') { setOverviewDateFrom(today); setOverviewDateTo(today); }
+    else if (preset === 'week') { setOverviewDateFrom(shiftManilaDate(today, -6)); setOverviewDateTo(today); }
+    else if (preset === 'month') { setOverviewDateFrom(today.slice(0, 7) + '-01'); setOverviewDateTo(today); }
+    else if (preset === 'all') { setOverviewDateFrom(''); setOverviewDateTo(''); }
+  };
+  const inOverviewDates = (row) => overviewDatesValid &&
+    (!overviewDateFrom || dateInManila(row.created_at) >= overviewDateFrom) &&
+    (!overviewDateTo || dateInManila(row.created_at) <= overviewDateTo);
+  const overviewAvailable = availableRows.filter(inOverviewDates);
+  const overviewCollected = collectedRows.filter(inOverviewDates);
+  const overviewAvailableBreakdown = groupWaste(overviewAvailable);
+  const overviewAvailableKg = overviewAvailable.reduce((sum, row) => sum + Math.max(0, Number(row.weight_kg) || 0), 0);
+  const overviewCollectedKg = overviewCollected.reduce((sum, row) => sum + Math.max(0, Number(row.weight_kg) || 0), 0);
+  // A pickup can include records from multiple days; show it when at least one
+  // collected surrender record falls within the overview's selected dates.
+  const visiblePickupIds = new Set(overviewCollected.map(row => row.waste_pickup_id));
+  const overviewPickups = pickups.filter(batch => visiblePickupIds.has(batch.id));
+  const overviewDateLabel = overviewDateFrom && overviewDateTo
+    ? `${overviewDateFrom} to ${overviewDateTo}`
+    : overviewDateFrom ? `From ${overviewDateFrom}`
+    : overviewDateTo ? `Through ${overviewDateTo}` : 'All surrender dates';
+  const pickupSurrenderRanges = new Map();
+  for (const row of collectedRows) {
+    const pickupId = row.waste_pickup_id;
+    const day = dateInManila(row.created_at);
+    const range = pickupSurrenderRanges.get(pickupId);
+    if (!range) pickupSurrenderRanges.set(pickupId, { from: day, to: day });
+    else {
+      if (day < range.from) range.from = day;
+      if (day > range.to) range.to = day;
+    }
+  }
+
   const stats = {
     total: summaryRows.length,
     totalKg: summaryRows.reduce((sum, r) => sum + (Number(r.weight_kg) || 0), 0).toFixed(1),
@@ -259,7 +375,7 @@ export default function SurrenderLogs() {
     flagged: summaryRows.filter(r => Number(r.weight_kg) > 50).length,
   };
 
-  useEffect(() => { setPage(1); }, [search, wasteType, statusFilter, allocationFilter, dateFrom, dateTo]);
+  useEffect(() => { setPage(1); }, [search, wasteType, statusFilter, allocationFilter, collectionFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -291,11 +407,20 @@ export default function SurrenderLogs() {
           <div className="flex flex-col lg:flex-row justify-between items-start mb-8 gap-4">
             <div>
               <h2 className={`text-2xl sm:text-3xl font-bold ${t.textMain} tracking-tight`}>Surrender Logs</h2>
-              <p className={`${t.textMuted} mt-1 text-sm font-medium`}>Full WISHCRAFT Fund contribution audit trail</p>
+              <p className={`${t.textMuted} mt-1 text-sm font-medium`}>{showCollectionView ? "Collection totals, waste breakdown, and pickup history" : "Full WISHCRAFT Fund contribution audit trail"}</p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
               <button onClick={fetchLogs} className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all ${t.accentText} ${isLightMode ? 'border-[#A8CFBA] bg-[#D8EDDF] hover:bg-[#C4E0CF]' : 'border-[#52B788]/25 bg-[#52B788]/8 hover:bg-[#52B788]/15'}`}>
                 Refresh
+              </button>
+              <button type="button" onClick={() => setShowCollectionView(prev => !prev)}
+                aria-pressed={showCollectionView}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${showCollectionView ? 'bg-emerald-600 text-white border-emerald-600' : isLightMode ? 'bg-white border-[#A8CFBA] text-[#2D6A4F] hover:bg-[#D8EDDF]' : 'bg-[#52B788]/10 border-[#52B788]/30 text-[#52B788] hover:bg-[#52B788]/20'}`}>
+                {showCollectionView ? '← Back to Surrender Logs' : 'Garbage Collection View'}
+              </button>
+              <button disabled={!!pickupError || loading || !availableRows.length} onClick={() => { setPickupDateFrom(overviewDateFrom || ''); setPickupDateTo(overviewDateTo || dateInManila(Date.now())); setPickupConfirmed(false); setPickupModal(true); }}
+                className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                Mark Waste as Collected
               </button>
               <button onClick={handleExport} className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all ${isLightMode ? 'border-[#DDE9F5] bg-[#DDE9F5] text-[#2A5FA8] hover:bg-[#C8DCF0]' : 'border-[#4A9ECC]/25 bg-[#4A9ECC]/10 text-[#4A9ECC] hover:bg-[#4A9ECC]/20'}`}>
                 Export CSV
@@ -303,6 +428,7 @@ export default function SurrenderLogs() {
             </div>
           </div>
 
+          {!showCollectionView && (<>
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <Stat label="Total Submissions" value={stats.total.toLocaleString()} sub="Selected dates" iconBg={t.iconBg1} t={t}
@@ -319,11 +445,87 @@ export default function SurrenderLogs() {
             />
           </div>
 
+          </>)}
+
+          {showCollectionView && (<>
+          {/* Dedicated Garbage Collection view — opened from the header button. */}
+          <div className={`rounded-2xl border p-5 mb-6 ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.07]'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+              <div>
+                <h3 className={`font-bold text-lg ${t.textMain}`}>Garbage Collection Overview</h3>
+                <p className={`text-xs ${t.textMuted}`}>Select surrender dates to view the waste stored or collected during that period. Collection dates are shown in Pickup History.</p>
+              </div>
+              <span className="text-[11px] font-semibold rounded-lg px-3 py-2 bg-emerald-500/10 text-emerald-600">{overviewAvailable.length} uncollected submissions</span>
+            </div>
+            <div className={`rounded-xl p-3 mb-4 ${isLightMode ? 'bg-gray-50' : 'bg-white/5'}`}>
+              <p className={`text-xs font-semibold mb-2 ${t.textMuted}`}>Filter overview by surrender date (does not change the logs table below)</p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {[['all', 'All Dates'], ['today', 'Today'], ['week', 'Last 7 Days'], ['month', 'This Month'], ['custom', 'Custom']].map(([key, label]) => (
+                  <button type="button" key={key} onClick={() => applyOverviewPreset(key)}
+                    className={`rounded-lg px-3 py-2 text-xs font-bold border ${overviewPreset === key ? 'bg-emerald-600 text-white border-emerald-600' : isLightMode ? 'bg-white border-gray-200 text-gray-700' : 'bg-white/5 border-white/10 text-white/80'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {overviewPreset === 'custom' && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div><label className={`block text-xs font-semibold mb-1 ${t.textMuted}`}>Surrender Date From</label><input type="date" className={`${inputCls} w-full`} value={overviewDateFrom} onChange={e => setOverviewDateFrom(e.target.value)} /></div>
+                <div><label className={`block text-xs font-semibold mb-1 ${t.textMuted}`}>Surrender Date To</label><input type="date" className={`${inputCls} w-full`} value={overviewDateTo} onChange={e => setOverviewDateTo(e.target.value)} /></div>
+              </div>}
+              <p className={`text-xs mt-2 ${!overviewDatesValid ? 'text-red-500' : t.textMuted}`}>
+                {!overviewDatesValid ? 'Start date must be on or before end date.' : `Showing surrender dates: ${overviewDateLabel} (Philippine time)`}
+              </p>
+            </div>
+            {pickupError && <div role="alert" className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-600 mb-4">{pickupError}</div>}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+              <div className={`rounded-xl p-4 ${isLightMode ? 'bg-emerald-50' : 'bg-emerald-500/10'}`}><p className={`text-xs ${t.textMuted}`}>Available for Pickup</p><p className={`text-2xl font-extrabold ${t.textMain}`}>{fmtKg(overviewAvailableKg)}</p><p className={`text-[10px] mt-1 ${t.textMuted}`}>{overviewDateLabel}</p></div>
+              <div className={`rounded-xl p-4 ${isLightMode ? 'bg-blue-50' : 'bg-blue-500/10'}`}><p className={`text-xs ${t.textMuted}`}>Already Collected</p><p className={`text-2xl font-extrabold ${t.textMain}`}>{fmtKg(overviewCollectedKg)}</p><p className={`text-[10px] mt-1 ${t.textMuted}`}>{overviewDateLabel}</p></div>
+              <div className={`rounded-xl p-4 ${isLightMode ? 'bg-gray-100' : 'bg-white/5'}`}><p className={`text-xs ${t.textMuted}`}>Recorded Pickups</p><p className={`text-2xl font-extrabold ${t.textMain}`}>{overviewPickups.length}</p><p className={`text-[10px] mt-1 ${t.textMuted}`}>Matching surrender dates · latest 100 records</p></div>
+            </div>
+            <h4 className={`text-xs font-bold uppercase tracking-wider mb-2 ${t.textMuted}`}>Available Waste by Type <span className="normal-case font-normal">({overviewDateLabel})</span></h4>
+            {overviewAvailableBreakdown.length ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                {overviewAvailableBreakdown.map(item => <div key={item.type} className={`p-3 rounded-xl border ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/10'}`}>
+                  <p className={`text-xs ${t.textMuted}`}>{item.type}</p>
+                  <p className={`font-bold ${t.textMain}`}>{fmtKg(item.kg)}</p>
+                  <p className={`text-[10px] ${t.textMuted}`}>{item.count} logs</p>
+                </div>)}
+              </div>
+            ) : <p className={`text-xs ${t.textMuted}`}>No uncollected waste. New accepted surrender logs will appear here.</p>}
+          </div>
+
+          <div className={`rounded-2xl border p-5 mb-6 ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.07]'}`}>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h3 className={`font-bold ${t.textMain}`}>Pickup History</h3>
+              <span className={`text-xs ${t.textMuted}`}>Latest 100 pickups · filtered by overview surrender dates</span>
+            </div>
+            {!overviewPickups.length ? <p className={`text-xs ${t.textMuted}`}>No pickups match the selected surrender dates.</p> : (
+              <div className="max-h-72 overflow-y-auto space-y-2">
+                {overviewPickups.map(batch => (
+                  <details key={batch.id} className={`rounded-xl border p-3 ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/10'}`}>
+                    <summary className={`cursor-pointer flex flex-wrap justify-between gap-2 text-sm font-semibold ${t.textMain}`}>
+                      <span>Collected on {fmtFull(batch.collected_at)} · {batch.collector_name}</span>
+                      <span>{fmtKg(batch.total_kg)} · {batch.item_count} logs</span>
+                    </summary>
+                    <div className={`mt-3 text-xs ${t.textMuted}`}>
+                      <p className="font-semibold mb-2">Surrender dates covered: {pickupSurrenderRanges.has(batch.id) ? (() => { const range = pickupSurrenderRanges.get(batch.id); return range.from === range.to ? range.from : `${range.from} to ${range.to}`; })() : 'Not available'}</p>
+                      {(Array.isArray(batch.type_breakdown) ? batch.type_breakdown : []).map(item => <p key={item.type}>{item.type}: {fmtKg(item.kg)} ({item.count} logs)</p>)}
+                      {batch.notes && <p className="mt-2">Notes: {batch.notes}</p>}
+                      <p className="mt-2 break-all">Pickup ID: {batch.id}</p>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </div>
+
+          </>)}
+
+          {!showCollectionView && (<>
           {/* Filters */}
           <div className={`rounded-2xl border p-4 mb-6 ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.05]'}`}>
-            <div className="flex flex-wrap gap-3 items-end">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(170px,2.2fr)_minmax(110px,1fr)_minmax(130px,1.1fr)_minmax(170px,1.6fr)_minmax(115px,1fr)_minmax(145px,1.2fr)_minmax(145px,1.2fr)] gap-3 items-end">
 
-              <div className="w-full sm:flex-1 sm:min-w-[200px]">
+              <div className="min-w-0">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Search</label>
                 <div className="relative">
                   <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${t.textMuted}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -331,49 +533,58 @@ export default function SurrenderLogs() {
                 </div>
               </div>
 
-              <div className="w-full sm:w-auto sm:min-w-[130px]">
+              <div className="min-w-0">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Waste Type</label>
-                <select className={`${inputCls} cursor-pointer`} value={wasteType} onChange={e => setWasteType(e.target.value)}>
+                <select className={`${inputCls} w-full min-w-0 cursor-pointer`} value={wasteType} onChange={e => setWasteType(e.target.value)}>
                   {WASTE_TYPES.map(w => <option key={w}>{w}</option>)}
                 </select>
               </div>
 
-              <div className="w-full sm:w-auto sm:min-w-[160px]">
+              <div className="min-w-0">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Fund Status</label>
-                <select className={`${inputCls} cursor-pointer`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                <select className={`${inputCls} w-full min-w-0 cursor-pointer`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                   {WISHCRAFT_STATUSES.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
 
-              <div className="w-full sm:w-auto sm:min-w-[200px]">
+              <div className="min-w-0">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Contribution Type</label>
-                <select className={`${inputCls} cursor-pointer`} value={allocationFilter} onChange={e => setAllocationFilter(e.target.value)}>
+                <select className={`${inputCls} w-full min-w-0 cursor-pointer`} value={allocationFilter} onChange={e => setAllocationFilter(e.target.value)}>
                   {ALLOCATION_TYPES.map(a => <option key={a}>{a}</option>)}
                 </select>
               </div>
 
-              <div>
+              <div className="min-w-0">
+                <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>Collection</label>
+                <select className={`${inputCls} w-full min-w-0`} value={collectionFilter} onChange={e => setCollectionFilter(e.target.value)}>
+                  {['All', 'Available', 'Collected'].map(v => <option key={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="min-w-0">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>From</label>
-                <input type="date" className={inputCls} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+                <input type="date" className={`${inputCls} w-full min-w-0`} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <label className={`block text-[10px] font-bold uppercase tracking-widest ${t.textMuted} mb-1.5`}>To</label>
-                <input type="date" className={inputCls} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+                <input type="date" className={`${inputCls} w-full min-w-0`} value={dateTo} onChange={e => setDateTo(e.target.value)} />
               </div>
 
-              {(search || wasteType !== 'All' || statusFilter !== 'All' || allocationFilter !== 'All' || dateFrom || dateTo) && (
-                <button onClick={() => { setSearch(''); setWasteType('All'); setStatusFilter('All'); setAllocationFilter('All'); setDateFrom(''); setDateTo(''); }}
+
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className={`text-[11px] font-medium ${t.textMuted}`}>
+              Showing <span className={`font-bold ${t.textMain}`}>{filtered.length.toLocaleString()}</span> of{' '}
+              <span className={`font-bold ${t.textMain}`}>{logs.length.toLocaleString()}</span> total logs
+            </p>
+              {(search || wasteType !== 'All' || statusFilter !== 'All' || allocationFilter !== 'All' || collectionFilter !== 'All' || dateFrom || dateTo) && (
+                <button onClick={() => { setSearch(''); setWasteType('All'); setStatusFilter('All'); setAllocationFilter('All'); setCollectionFilter('All'); setDateFrom(''); setDateTo(''); }}
                   className={`px-3 py-2 rounded-xl text-xs font-bold transition-all border ${isLightMode ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' : 'border-red-500/20 bg-red-500/8 text-red-400 hover:bg-red-500/15'}`}>
                   Clear
                 </button>
               )}
             </div>
-
-            <p className={`text-[11px] font-medium ${t.textMuted} mt-3`}>
-              Showing <span className={`font-bold ${t.textMain}`}>{filtered.length.toLocaleString()}</span> of{' '}
-              <span className={`font-bold ${t.textMain}`}>{logs.length.toLocaleString()}</span> total logs
-            </p>
           </div>
 
           {/* Table */}
@@ -399,6 +610,7 @@ export default function SurrenderLogs() {
                       <th className="px-4 py-4 font-bold">Classroom / Section</th>
                       <th className="px-4 py-4 font-bold">Est. Fund Value</th>
                       <th className="px-4 py-4 font-bold">Fund Status</th>
+                      <th className="px-4 py-4 font-bold">Collection Status</th>
                       <th className="px-6 py-4 font-bold text-right">Action</th>
                     </tr>
                   </thead>
@@ -466,11 +678,16 @@ export default function SurrenderLogs() {
                             </div>
                           </td>
 
+                          <td className="px-4 py-4 text-xs">
+                            {log.waste_pickup_id ? <span className="text-blue-500 font-bold" title={`Pickup ID: ${log.waste_pickup_id}`}>Collected<br />{log.waste_collected_at ? fmtFull(log.waste_collected_at) : ''}</span> :
+                              isEligibleStock(log) ? <span className="text-amber-500 font-bold">Available</span> : <span className={t.textMuted}>Excluded (Rejected)</span>}
+                          </td>
                           <td className="px-6 py-4 text-right">
                             <button
-                              onClick={() => setLogToDelete(log)}
-                              className={`p-1.5 rounded-lg transition-all ${t.textMuted} hover:text-red-500 hover:bg-red-500/10`}
-                              title="Delete this log"
+                              onClick={() => !log.waste_pickup_id && setLogToDelete(log)}
+                              disabled={!!log.waste_pickup_id}
+                              className={`p-1.5 rounded-lg transition-all disabled:opacity-25 disabled:cursor-not-allowed ${t.textMuted} hover:text-red-500 hover:bg-red-500/10`}
+                              title={log.waste_pickup_id ? "Collected logs cannot be deleted" : "Delete this log"}
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -517,8 +734,43 @@ export default function SurrenderLogs() {
           )}
 
           <div className="h-4" />
+          </>)}
         </div>
       </div>
+
+      {pickupModal && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/70 p-4" onClick={() => !savingPickup && setPickupModal(false)}>
+          <div className={`w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl p-6 shadow-2xl ${isLightMode ? 'bg-white text-[#1A2418]' : 'bg-[#141A16] text-white'}`} onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold">Confirm Garbage Pickup</h3>
+            <p className={`text-sm mt-2 mb-4 ${t.textMuted}`}>Step 1: Select dates, review all eligible submissions, then confirm. Choose the surrender date range of the waste actually picked up. Only uncollected, non-rejected submissions within these dates (Philippine time) will be marked collected. Fund status stays unchanged. Collection time is saved automatically.</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div><label className="block text-xs font-bold mb-1">Surrender Date From *</label><input type="date" max={dateInManila(Date.now())} className={`${inputCls} w-full`} value={pickupDateFrom} onChange={e => { setPickupDateFrom(e.target.value); setPickupConfirmed(false); }} /></div>
+              <div><label className="block text-xs font-bold mb-1">Surrender Date To *</label><input type="date" max={dateInManila(Date.now())} className={`${inputCls} w-full`} value={pickupDateTo} onChange={e => { setPickupDateTo(e.target.value); setPickupConfirmed(false); }} /></div>
+            </div>
+            {!pickupDatesValid && <p className="text-xs text-amber-600 mb-3">Choose valid dates from oldest to newest, no later than today.</p>}
+            <div className="rounded-xl bg-emerald-500/10 p-3 mb-4">
+              <p className="font-bold">Selected pickup: {fmtKg(pickupKg)} · {pickupRows.length} submissions</p>
+              <div className="text-xs mt-2 space-y-1">{pickupBreakdown.map(item => <p key={item.type}>{item.type}: {fmtKg(item.kg)}</p>)}</div>
+              {pickupDatesValid && !pickupRows.length && <p className="text-xs mt-2">No available waste for these dates.</p>}
+            </div>
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 mb-3 text-xs">
+              <strong>Full pickup only:</strong> This action marks <strong>all {pickupRows.length} eligible submissions</strong> for these surrender dates as collected. If only some bags were picked up, do not confirm. Partial pickups are not supported in this version.
+            </div>
+            <label className="block text-xs font-bold mb-1">Step 2: Collector / Hauling Company *</label>
+            <input maxLength={120} className={`${inputCls} w-full mb-3`} placeholder="Name of waste collector" value={collectorName} onChange={e => setCollectorName(e.target.value)} />
+            <label className="block text-xs font-bold mb-1">Pickup Notes (optional)</label>
+            <textarea maxLength={1000} className={`${inputCls} w-full mb-4`} rows={2} placeholder="Vehicle, receipt number, remarks..." value={pickupNotes} onChange={e => setPickupNotes(e.target.value)} />
+            <label className="flex items-start gap-2 text-xs font-semibold mb-4 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-emerald-600" checked={pickupConfirmed} onChange={e => setPickupConfirmed(e.target.checked)} disabled={!pickupDatesValid || !pickupRows.length || savingPickup} />
+              <span>I verified the surrender dates, {pickupRows.length} records, and {fmtKg(pickupKg)} total. All selected waste was physically picked up.</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button disabled={savingPickup} onClick={() => setPickupModal(false)} className="px-4 py-2 rounded-xl border border-gray-400/30 text-sm">Cancel</button>
+              <button disabled={savingPickup || !pickupConfirmed || !collectorName.trim() || !pickupDatesValid || !pickupRows.length} onClick={handlePickup} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">{savingPickup ? 'Saving...' : 'Step 3: Confirm Collection'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {logToDelete && (
         <DeleteModal log={logToDelete} onConfirm={handleDelete} onClose={() => setLogToDelete(null)} isLightMode={isLightMode} t={t} />
