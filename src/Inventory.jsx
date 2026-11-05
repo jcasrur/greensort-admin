@@ -14,14 +14,21 @@ export default function Inventory() {
   const fetchInventory = useCallback(async () => {
     setLoading(true);
     // Aggregate surrender_logs by waste_type for a quick inventory overview
-    const { data, error } = await supabase
-      .from('surrender_logs')
-      .select('waste_type, weight_kg, encoded_status, status')
-      .neq('encoded_status', 'Rejected')
-      .neq('status', 'Rejected');
-    if (!error && data) {
+    const data = [];
+    let error = null;
+    for (let from = 0; ; from += 1000) {
+      const result = await supabase.from('surrender_logs')
+        .select('id, waste_type, weight_kg, encoded_status, status, waste_pickup_id')
+        .is('waste_pickup_id', null)
+        .order('id', { ascending: true })
+        .range(from, from + 999);
+      if (result.error) { error = result.error; break; }
+      data.push(...(result.data || []));
+      if (!result.data || result.data.length < 1000) break;
+    }
+    if (!error) {
       const grouped = {};
-      data.forEach(r => {
+      data.filter(r => String(r.encoded_status || '').toLowerCase() !== 'rejected' && String(r.status || '').toLowerCase() !== 'rejected').forEach(r => {
         const key = r.waste_type || 'Unknown';
         if (!grouped[key]) grouped[key] = { waste_type: key, total_kg: 0, count: 0 };
         grouped[key].total_kg += Number(r.weight_kg) || 0;
@@ -41,7 +48,7 @@ export default function Inventory() {
         <div className="p-6 lg:p-8 max-w-[1400px] mx-auto">
           <div className="mb-8">
             <h1 className={`text-3xl font-bold ${t.textMain} tracking-tight`}>Inventory Storage</h1>
-            <p className={`${t.textMuted} mt-1 text-sm`}>Current material stock aggregated from surrender logs</p>
+            <p className={`${t.textMuted} mt-1 text-sm`}>Uncollected physical waste, excluding rejected submissions</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
