@@ -137,6 +137,10 @@ export default function SurrenderLogs() {
   const [pickupDateTo, setPickupDateTo] = useState('');
   const [savingPickup, setSavingPickup] = useState(false);
   const [pickupConfirmed, setPickupConfirmed] = useState(false);
+  const [pickupToUndo, setPickupToUndo] = useState(null);
+  const [undoReason, setUndoReason] = useState('');
+  const [undoVerified, setUndoVerified] = useState(false);
+  const [undoSaving, setUndoSaving] = useState(false);
   const [collectionFilter, setCollectionFilter] = useState('All');
   const [overviewDateFrom, setOverviewDateFrom] = useState('');
   const [overviewDateTo, setOverviewDateTo] = useState('');
@@ -227,6 +231,27 @@ export default function SurrenderLogs() {
       alert('Unable to record pickup: ' + error.message);
     } finally {
       setSavingPickup(false);
+    }
+  };
+
+  const handleUndoPickup = async () => {
+    if (!pickupToUndo || undoSaving || !undoVerified || undoReason.trim().length < 5) return;
+    setUndoSaving(true);
+    try {
+      const { error } = await supabase.rpc('undo_waste_pickup', {
+        p_pickup_id: pickupToUndo.id,
+        p_reason: undoReason.trim(),
+      });
+      if (error) throw error;
+      setPickupToUndo(null);
+      setUndoReason('');
+      setUndoVerified(false);
+      await fetchLogs();
+      alert('Collection successfully undone. The linked surrender logs are available for pickup again.');
+    } catch (error) {
+      alert('Unable to undo collection: ' + error.message);
+    } finally {
+      setUndoSaving(false);
     }
   };
 
@@ -349,7 +374,16 @@ export default function SurrenderLogs() {
   // A pickup can include records from multiple days; show it when at least one
   // collected surrender record falls within the overview's selected dates.
   const visiblePickupIds = new Set(overviewCollected.map(row => row.waste_pickup_id));
-  const overviewPickups = pickups.filter(batch => visiblePickupIds.has(batch.id));
+  const overviewPickups = pickups.filter(batch => {
+    if (visiblePickupIds.has(batch.id)) return true;
+    if (!batch.undone_at) return false;
+    // Keep undone pickups visible even though their logs are no longer linked.
+    if (!overviewDatesValid) return false;
+    if (!overviewDateFrom && !overviewDateTo) return true;
+    if (!batch.surrender_date_from || !batch.surrender_date_to) return false;
+    return (!overviewDateFrom || batch.surrender_date_to >= overviewDateFrom) &&
+      (!overviewDateTo || batch.surrender_date_from <= overviewDateTo);
+  });
   const overviewDateLabel = overviewDateFrom && overviewDateTo
     ? `${overviewDateFrom} to ${overviewDateTo}`
     : overviewDateFrom ? `From ${overviewDateFrom}`
@@ -496,21 +530,35 @@ export default function SurrenderLogs() {
           <div className={`rounded-2xl border p-5 mb-6 ${isLightMode ? 'bg-white border-[#E3E8E1]' : 'bg-[#131A16] border-white/[0.07]'}`}>
             <div className="flex items-center justify-between gap-3 mb-3">
               <h3 className={`font-bold ${t.textMain}`}>Pickup History</h3>
-              <span className={`text-xs ${t.textMuted}`}>Latest 100 pickups · filtered by overview surrender dates</span>
+              <span className={`text-xs ${t.textMuted}`}>Latest 100 pickups · active and undone · filtered by surrender dates</span>
             </div>
             {!overviewPickups.length ? <p className={`text-xs ${t.textMuted}`}>No pickups match the selected surrender dates.</p> : (
               <div className="max-h-72 overflow-y-auto space-y-2">
                 {overviewPickups.map(batch => (
                   <details key={batch.id} className={`rounded-xl border p-3 ${isLightMode ? 'border-[#E3E8E1]' : 'border-white/10'}`}>
                     <summary className={`cursor-pointer flex flex-wrap justify-between gap-2 text-sm font-semibold ${t.textMain}`}>
-                      <span>Collected on {fmtFull(batch.collected_at)} · {batch.collector_name}</span>
+                      <span>{batch.undone_at ? '↶ Undone collection' : 'Collected'} on {fmtFull(batch.collected_at)} · {batch.collector_name}{batch.undone_at && <span className="ml-2 rounded-md bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600">UNDONE</span>}</span>
                       <span>{fmtKg(batch.total_kg)} · {batch.item_count} logs</span>
                     </summary>
                     <div className={`mt-3 text-xs ${t.textMuted}`}>
-                      <p className="font-semibold mb-2">Surrender dates covered: {pickupSurrenderRanges.has(batch.id) ? (() => { const range = pickupSurrenderRanges.get(batch.id); return range.from === range.to ? range.from : `${range.from} to ${range.to}`; })() : 'Not available'}</p>
+                      <p className="font-semibold mb-2">Surrender dates covered: {pickupSurrenderRanges.has(batch.id) ? (() => { const range = pickupSurrenderRanges.get(batch.id); return range.from === range.to ? range.from : `${range.from} to ${range.to}`; })() : batch.surrender_date_from ? (batch.surrender_date_from === batch.surrender_date_to ? batch.surrender_date_from : `${batch.surrender_date_from} to ${batch.surrender_date_to}`) : 'Not available'}</p>
                       {(Array.isArray(batch.type_breakdown) ? batch.type_breakdown : []).map(item => <p key={item.type}>{item.type}: {fmtKg(item.kg)} ({item.count} logs)</p>)}
                       {batch.notes && <p className="mt-2">Notes: {batch.notes}</p>}
                       <p className="mt-2 break-all">Pickup ID: {batch.id}</p>
+                      {batch.undone_at ? (
+                        <div className="mt-3 rounded-lg bg-amber-500/10 p-3 text-amber-600">
+                          <p className="font-semibold">Undone on {fmtFull(batch.undone_at)}</p>
+                          <p>Reason: {batch.undo_reason || 'Not provided'}</p>
+                          <p>Original surrender records were restored to available inventory.</p>
+                        </div>
+                      ) : (
+                        <div className="mt-3 flex justify-end">
+                          <button type="button" onClick={() => { setPickupToUndo(batch); setUndoReason(''); setUndoVerified(false); }}
+                            className="rounded-lg border border-amber-500/40 px-3 py-2 text-xs font-bold text-amber-600 hover:bg-amber-500/10">
+                            ↶ Undo Collection
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </details>
                 ))}
@@ -767,6 +815,44 @@ export default function SurrenderLogs() {
             <div className="flex justify-end gap-2">
               <button disabled={savingPickup} onClick={() => setPickupModal(false)} className="px-4 py-2 rounded-xl border border-gray-400/30 text-sm">Cancel</button>
               <button disabled={savingPickup || !pickupConfirmed || !collectorName.trim() || !pickupDatesValid || !pickupRows.length} onClick={handlePickup} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold disabled:opacity-40">{savingPickup ? 'Saving...' : 'Step 3: Confirm Collection'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pickupToUndo && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black/70 p-4"
+          onClick={() => { if (!undoSaving) setPickupToUndo(null); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="undo-pickup-heading"
+            className={`w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl p-6 shadow-2xl ${isLightMode ? 'bg-white text-[#1A2418]' : 'bg-[#141A16] text-white'}`}
+            onClick={e => e.stopPropagation()}>
+            <h3 id="undo-pickup-heading" className="text-lg font-bold">Undo Garbage Collection?</h3>
+            <p className={`mt-2 text-sm ${t.textMuted}`}>
+              This will restore all {pickupToUndo.item_count} surrender logs ({fmtKg(pickupToUndo.total_kg)})
+              to Available for Pickup. The original pickup remains in history, marked Undone.
+            </p>
+            <div className={`rounded-xl border p-3 my-4 text-xs ${isLightMode ? 'border-gray-200 bg-gray-50' : 'border-white/10 bg-white/5'}`}>
+              <p>Collector: <strong>{pickupToUndo.collector_name}</strong></p>
+              <p>Collected: {fmtFull(pickupToUndo.collected_at)}</p>
+              <p>Pickup ID: <span className="break-all">{pickupToUndo.id}</span></p>
+            </div>
+            <label className="block text-xs font-bold mb-1" htmlFor="undo-reason">Reason for undo *</label>
+            <textarea id="undo-reason" rows={3} maxLength={500} value={undoReason} disabled={undoSaving}
+              onChange={e => { setUndoReason(e.target.value); setUndoVerified(false); }}
+              placeholder="e.g. Pickup recorded on wrong dates (at least 5 characters)"
+              className={`${inputCls} w-full resize-none mb-3`} />
+            <label className="flex items-start gap-2 text-xs font-semibold mb-5 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-amber-600" checked={undoVerified}
+                disabled={undoSaving} onChange={e => setUndoVerified(e.target.checked)} />
+              <span>I confirm this pickup was recorded incorrectly and its entire weight should be returned to available inventory.</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={undoSaving} onClick={() => setPickupToUndo(null)} className="rounded-xl border border-gray-400/30 px-4 py-2 text-sm">Cancel</button>
+              <button type="button" disabled={undoSaving || !undoVerified || undoReason.trim().length < 5}
+                onClick={handleUndoPickup}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">
+                {undoSaving ? 'Restoring...' : 'Confirm Undo Collection'}
+              </button>
             </div>
           </div>
         </div>
